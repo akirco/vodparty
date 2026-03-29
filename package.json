@@ -4,12 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun server.ts",
-    "build": "vite build && bun build server.ts --outdir dist --target node --packages external",
+    "dev": "node server.ts",
+    "build": "vite build && tsc -p tsconfig.app.json",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "start": "bun dist/server.js"
+    "start": "node ./dist/server.js"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
