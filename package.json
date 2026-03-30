@@ -26,6 +26,7 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
+    "@netlify/functions": "^5.1.5",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
     "@types/react-dom": "^19.2.3",
