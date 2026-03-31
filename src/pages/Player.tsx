@@ -148,7 +148,7 @@ export const Player: React.FC = () => {
       if (isPusherEnabled() && pusherClient) {
         pusherChannel.current = pusherClient.subscribe(`private-party-${partyId}`);
         
-        pusherChannel.current.bind("video-action", (data: VideoAction) => {
+        pusherChannel.current.bind("client-video-action", (data: VideoAction) => {
           if (!videoRef.current) return;
 
           if (data.sourceId && data.sourceId !== activeSourceId) {
