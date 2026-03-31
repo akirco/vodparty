@@ -77,6 +77,9 @@ export const Layout: React.FC = () => {
                     <ChevronLeft className="w-5 h-5" />
                   </button>
                 )}
+                <a href="/">
+                  <img src="/favicon-32x32.png" />
+                </a>
               </div>
 
               {/* Desktop Search */}

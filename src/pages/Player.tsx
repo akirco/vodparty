@@ -17,10 +17,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { HlsPlayer } from "../components/HlsPlayer";
+import { isPusherEnabled, pusherClient } from "../config/pusher";
 import { fetchVideoDetails, fetchVideos, getSources } from "../services/api";
 import { getHistory, saveHistoryItem } from "../services/history";
 import { ApiSource, PlayUrl, Video } from "../types";
-import { pusherClient, isPusherEnabled } from "../config/pusher";
 
 interface PlayGroup {
   groupName: string;
@@ -144,44 +144,48 @@ export const Player: React.FC = () => {
         }, 500);
       });
 
-      // Pusher setup for production (use private channel for client events)
       if (isPusherEnabled() && pusherClient) {
         console.log("[Pusher] Connecting to private-party-" + partyId);
-        pusherChannel.current = pusherClient.subscribe(`private-party-${partyId}`);
-        
-        pusherChannel.current.bind("client-video-action", (data: VideoAction) => {
-          console.log("[Pusher] Received video-action:", data);
-          if (!videoRef.current) return;
+        pusherChannel.current = pusherClient.subscribe(
+          `private-party-${partyId}`,
+        );
 
-          if (data.sourceId && data.sourceId !== activeSourceId) {
-            setActiveSourceId(data.sourceId);
-          }
-          if (data.groupName && data.groupName !== activeGroupName) {
-            setActiveGroupName(data.groupName);
-          }
-          if (data.playUrl && data.playUrl !== currentPlayUrl) {
-            setCurrentPlayUrl(data.playUrl);
-            setActiveEpisode(data.episodeIndex);
-          }
+        pusherChannel.current.bind(
+          "client-video-action",
+          (data: VideoAction) => {
+            console.log("[Pusher] Received video-action:", data);
+            if (!videoRef.current) return;
 
-          isRemoteUpdate.current = true;
+            if (data.sourceId && data.sourceId !== activeSourceId) {
+              setActiveSourceId(data.sourceId);
+            }
+            if (data.groupName && data.groupName !== activeGroupName) {
+              setActiveGroupName(data.groupName);
+            }
+            if (data.playUrl && data.playUrl !== currentPlayUrl) {
+              setCurrentPlayUrl(data.playUrl);
+              setActiveEpisode(data.episodeIndex);
+            }
 
-          if (data.action === "play") {
-            if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
+            isRemoteUpdate.current = true;
+
+            if (data.action === "play") {
+              if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
+                videoRef.current.currentTime = data.time;
+              }
+              videoRef.current.play().catch(console.error);
+            } else if (data.action === "pause") {
+              videoRef.current.currentTime = data.time;
+              videoRef.current.pause();
+            } else if (data.action === "seek") {
               videoRef.current.currentTime = data.time;
             }
-            videoRef.current.play().catch(console.error);
-          } else if (data.action === "pause") {
-            videoRef.current.currentTime = data.time;
-            videoRef.current.pause();
-          } else if (data.action === "seek") {
-            videoRef.current.currentTime = data.time;
-          }
 
-          setTimeout(() => {
-            isRemoteUpdate.current = false;
-          }, 500);
-        });
+            setTimeout(() => {
+              isRemoteUpdate.current = false;
+            }, 500);
+          },
+        );
 
         pusherChannel.current.bind("pusher:subscription_succeeded", () => {
           setRoomSize((prev: number) => prev + 1);
@@ -219,10 +223,20 @@ export const Player: React.FC = () => {
 
       // Pusher for production
       const pusherEnabled = isPusherEnabled();
-      console.log("[Pusher] emit - enabled:", pusherEnabled, "channel:", !!pusherChannel.current, "partyId:", partyId);
+      console.log(
+        "[Pusher] emit - enabled:",
+        pusherEnabled,
+        "channel:",
+        !!pusherChannel.current,
+        "partyId:",
+        partyId,
+      );
       if (pusherEnabled && pusherChannel.current) {
         try {
-          console.log("[Pusher] Triggering client-video-action:", videoActionData);
+          console.log(
+            "[Pusher] Triggering client-video-action:",
+            videoActionData,
+          );
           pusherChannel.current.trigger("client-video-action", videoActionData);
         } catch (err) {
           console.error("[Pusher] Trigger error:", err);
@@ -268,7 +282,6 @@ export const Player: React.FC = () => {
 
           setAggregatedSources([initialSource]);
 
-          // Check history
           const history = getHistory();
           const historyItem = history.find((h) => h.videoId === data.vod_id);
 
@@ -289,7 +302,6 @@ export const Player: React.FC = () => {
             }
           }
 
-          // Background search across other sources
           const otherSources = getSources().filter((s) => s.id !== sourceId);
           otherSources.forEach(async (otherSource) => {
             try {
@@ -300,7 +312,6 @@ export const Player: React.FC = () => {
                 otherSource.id,
               );
               if (searchRes.list) {
-                // Find best match (exact name match)
                 const match = searchRes.list.find(
                   (v) => v.vod_name === data.vod_name,
                 );
@@ -371,7 +382,6 @@ export const Player: React.FC = () => {
     const currentTime = videoRef.current.currentTime;
     const duration = videoRef.current.duration;
 
-    // Throttle save to every 5 seconds or if time jumps backwards
     if (
       currentTime - lastSaveTime.current > 5 ||
       currentTime < lastSaveTime.current
@@ -507,7 +517,7 @@ export const Player: React.FC = () => {
             className={`group ${
               isCssFullscreen
                 ? "fixed inset-0 z-100 w-screen h-screen bg-black flex items-center justify-center"
-                : "relative aspect-video bg-black rounded-xl overflow-hidden shadow-2xl"
+                : "relative aspect-video bg-black rounded-xl overflow-hidden shadow-xl"
             }`}
           >
             {currentPlayUrl ? (
