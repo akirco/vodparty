@@ -96,7 +96,23 @@ export const Settings: React.FC = () => {
           Manage your Apple CMS JSON API sources and preferences.
         </p>
       </div>
-
+      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={handleSave}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
+          >
+            <Save className="w-4 h-4" />
+            Save Configuration
+          </button>
+          {saved && (
+            <span className="flex items-center gap-1 text-emerald-500 text-sm font-medium">
+              <CheckCircle2 className="w-4 h-4" />
+              Saved successfully
+            </span>
+          )}
+        </div>
+      </div>
       <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 space-y-6">
         <h3 className="text-xl font-semibold text-white">API Sources</h3>
 
@@ -145,7 +161,7 @@ export const Settings: React.FC = () => {
 
         <form
           onSubmit={handleAddSource}
-          className="flex gap-3 pt-4 border-t border-zinc-800"
+          className="flex flex-wrap gap-3 pt-4 border-t border-zinc-800"
         >
           <input
             type="text"
@@ -208,24 +224,6 @@ export const Settings: React.FC = () => {
           </div>
         </div>
       )}
-
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={handleSave}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-          >
-            <Save className="w-4 h-4" />
-            Save Configuration
-          </button>
-          {saved && (
-            <span className="flex items-center gap-1 text-emerald-500 text-sm font-medium">
-              <CheckCircle2 className="w-4 h-4" />
-              Saved successfully
-            </span>
-          )}
-        </div>
-      </div>
     </div>
   );
 };

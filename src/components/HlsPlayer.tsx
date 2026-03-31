@@ -10,6 +10,7 @@ interface HlsPlayerProps {
   onPause?: () => void;
   onSeeked?: () => void;
   onTimeUpdate?: () => void;
+  onEnded?: () => void;
 }
 
 export const HlsPlayer: React.FC<HlsPlayerProps> = ({
@@ -21,6 +22,7 @@ export const HlsPlayer: React.FC<HlsPlayerProps> = ({
   onPause,
   onSeeked,
   onTimeUpdate,
+  onEnded,
 }) => {
   const internalVideoRef = useRef<HTMLVideoElement>(null);
   const videoRef = externalVideoRef || internalVideoRef;
@@ -68,6 +70,7 @@ export const HlsPlayer: React.FC<HlsPlayerProps> = ({
       onPause={onPause}
       onSeeked={onSeeked}
       onTimeUpdate={onTimeUpdate}
+      onEnded={onEnded}
     />
   );
 };

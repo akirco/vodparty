@@ -171,6 +171,7 @@ export const Player: React.FC = () => {
         const data = await fetchVideoDetails(parseInt(id, 10), sourceId);
         if (data) {
           const groups = parsePlayUrls(data.vod_play_url, data.vod_play_from);
+
           const initialSource: AggregatedSource = {
             apiSource: primaryApiSource,
             video: data,
@@ -221,7 +222,7 @@ export const Player: React.FC = () => {
                     match.vod_play_from,
                   );
                   if (otherGroups.length > 0) {
-                    setAggregatedSources((prev) => {
+                    setAggregatedSources((prev: AggregatedSource[]) => {
                       if (prev.some((s) => s.apiSource.id === otherSource.id))
                         return prev;
                       return [
@@ -292,6 +293,28 @@ export const Player: React.FC = () => {
         timestamp: Date.now(),
       });
       lastSaveTime.current = currentTime;
+    }
+  };
+
+  const handleEnded = () => {
+    if (!activeGroup) return;
+    const nextIndex = activeEpisode + 1;
+    if (nextIndex < activeGroup.urls.length) {
+      const nextEp = activeGroup.urls[nextIndex];
+      setCurrentPlayUrl(nextEp.url);
+      setActiveEpisode(nextIndex);
+      setInitialTime(0);
+      if (socket && partyId) {
+        socket.emit("video-action", {
+          roomId: partyId,
+          action: "play",
+          time: 0,
+          sourceId: activeSourceId,
+          groupName: activeGroupName,
+          playUrl: nextEp.url,
+          episodeIndex: nextIndex,
+        });
+      }
     }
   };
 
@@ -386,6 +409,7 @@ export const Player: React.FC = () => {
                 onPause={() => emitVideoAction("pause")}
                 onSeeked={() => emitVideoAction("seek")}
                 onTimeUpdate={handleTimeUpdate}
+                onEnded={handleEnded}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-zinc-500">
