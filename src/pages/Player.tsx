@@ -20,6 +20,7 @@ import { HlsPlayer } from "../components/HlsPlayer";
 import { fetchVideoDetails, fetchVideos, getSources } from "../services/api";
 import { getHistory, saveHistoryItem } from "../services/history";
 import { ApiSource, PlayUrl, Video } from "../types";
+import { pusherClient, isPusherEnabled } from "../config/pusher";
 
 interface PlayGroup {
   groupName: string;
@@ -30,6 +31,16 @@ interface AggregatedSource {
   apiSource: ApiSource;
   video: Video;
   playGroups: PlayGroup[];
+}
+
+interface VideoAction {
+  roomId?: string;
+  action: string;
+  time: number;
+  sourceId?: string;
+  groupName?: string;
+  playUrl?: string;
+  episodeIndex?: number;
 }
 
 const parsePlayUrls = (
@@ -85,6 +96,8 @@ export const Player: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isRemoteUpdate = useRef(false);
   const lastSaveTime = useRef(0);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pusherChannel = useRef<any>(null);
 
   useEffect(() => {
     if (partyId) {
@@ -131,23 +144,81 @@ export const Player: React.FC = () => {
         }, 500);
       });
 
+      // Pusher setup for production (use private channel for client events)
+      if (isPusherEnabled() && pusherClient) {
+        pusherChannel.current = pusherClient.subscribe(`private-party-${partyId}`);
+        
+        pusherChannel.current.bind("video-action", (data: VideoAction) => {
+          if (!videoRef.current) return;
+
+          if (data.sourceId && data.sourceId !== activeSourceId) {
+            setActiveSourceId(data.sourceId);
+          }
+          if (data.groupName && data.groupName !== activeGroupName) {
+            setActiveGroupName(data.groupName);
+          }
+          if (data.playUrl && data.playUrl !== currentPlayUrl) {
+            setCurrentPlayUrl(data.playUrl);
+            setActiveEpisode(data.episodeIndex);
+          }
+
+          isRemoteUpdate.current = true;
+
+          if (data.action === "play") {
+            if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
+              videoRef.current.currentTime = data.time;
+            }
+            videoRef.current.play().catch(console.error);
+          } else if (data.action === "pause") {
+            videoRef.current.currentTime = data.time;
+            videoRef.current.pause();
+          } else if (data.action === "seek") {
+            videoRef.current.currentTime = data.time;
+          }
+
+          setTimeout(() => {
+            isRemoteUpdate.current = false;
+          }, 500);
+        });
+
+        pusherChannel.current.bind("pusher:subscription_succeeded", () => {
+          setRoomSize((prev: number) => prev + 1);
+        });
+      }
+
       return () => {
         newSocket.close();
+        if (pusherChannel.current) {
+          pusherChannel.current.unbind_all();
+          pusherClient?.unsubscribe(`private-party-${partyId}`);
+        }
       };
     }
   }, [partyId, activeSourceId, activeGroupName, currentPlayUrl]);
 
   const emitVideoAction = (action: string) => {
-    if (!isRemoteUpdate.current && socket && partyId && videoRef.current) {
-      socket.emit("video-action", {
-        roomId: partyId,
+    if (!isRemoteUpdate.current && partyId && videoRef.current) {
+      const videoActionData: VideoAction = {
         action,
         time: videoRef.current.currentTime,
         sourceId: activeSourceId,
         groupName: activeGroupName,
         playUrl: currentPlayUrl,
         episodeIndex: activeEpisode,
-      });
+      };
+
+      // Socket.IO for development
+      if (socket) {
+        socket.emit("video-action", {
+          roomId: partyId,
+          ...videoActionData,
+        });
+      }
+
+      // Pusher for production
+      if (isPusherEnabled() && pusherChannel.current) {
+        pusherChannel.current.trigger("client-video-action", videoActionData);
+      }
     }
   };
 
