@@ -427,7 +427,7 @@ export const Player: React.FC = () => {
             className={`group ${
               isCssFullscreen
                 ? "fixed inset-0 z-100 w-screen h-screen bg-black flex items-center justify-center"
-                : "relative aspect-video bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10"
+                : "relative aspect-video bg-black rounded-xl overflow-hidden shadow-2xl"
             }`}
           >
             {currentPlayUrl ? (
@@ -464,7 +464,7 @@ export const Player: React.FC = () => {
             </button>
           </div>
 
-           <div>
+          <div>
             <h1 className="text-3xl font-bold text-white">{video.vod_name}</h1>
             <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-zinc-400">
               <span className="flex items-center gap-1">

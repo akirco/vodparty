@@ -96,8 +96,8 @@ export const Settings: React.FC = () => {
           Manage your Apple CMS JSON API sources and preferences.
         </p>
       </div>
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-        <div className="flex items-center gap-4">
+      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6">
+        <div className="flex items-center gap-4 justify-end">
           <button
             onClick={handleSave}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
@@ -113,14 +113,14 @@ export const Settings: React.FC = () => {
           )}
         </div>
       </div>
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 space-y-6">
+      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
         <h3 className="text-xl font-semibold text-white">API Sources</h3>
 
         <div className="space-y-3">
           {sources.map((source) => (
             <div
               key={source.id}
-              className={`flex items-center justify-between p-4 rounded-lg border ${primaryId === source.id ? "border-indigo-500 bg-indigo-500/10" : "border-zinc-800 bg-zinc-950"}`}
+              className={`flex items-center justify-between p-4 rounded-lg border ${primaryId === source.id ? "border-indigo-500 bg-indigo-500/10" : "border-zinc-800/50 bg-zinc-950"}`}
             >
               <div className="flex-1 min-w-0 pr-4">
                 <div className="flex items-center gap-2">
@@ -161,14 +161,14 @@ export const Settings: React.FC = () => {
 
         <form
           onSubmit={handleAddSource}
-          className="flex flex-wrap gap-3 pt-4 border-t border-zinc-800"
+          className="flex flex-wrap gap-3 pt-4 border-t border-zinc-800/50"
         >
           <input
             type="text"
             placeholder="Source Name (e.g. My API)"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            className="flex-1 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             required
           />
           <input
@@ -176,7 +176,7 @@ export const Settings: React.FC = () => {
             placeholder="https://.../api.php/provide/vod/"
             value={newUrl}
             onChange={(e) => setNewUrl(e.target.value)}
-            className="flex-2 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm font-mono"
+            className="flex-2 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm font-mono"
             required
           />
           <button
@@ -189,7 +189,7 @@ export const Settings: React.FC = () => {
       </div>
 
       {categories.length > 0 && (
-        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 space-y-6">
+        <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
           <h3 className="text-xl font-semibold text-white">
             Category Visibility
           </h3>
@@ -206,7 +206,7 @@ export const Settings: React.FC = () => {
                   onClick={() => toggleCategoryVisibility(cat.type_id)}
                   className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
                     isHidden
-                      ? "border-zinc-800 bg-zinc-950/50 text-zinc-500"
+                      ? "border-zinc-800/50 bg-zinc-950/50 text-zinc-500"
                       : "border-indigo-500/30 bg-indigo-500/10 text-indigo-100"
                   }`}
                 >

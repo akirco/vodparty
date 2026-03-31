@@ -59,7 +59,7 @@ export const Layout: React.FC = () => {
       <div className="relative z-10 flex flex-col min-h-screen">
         {/* Header - Added data-tauri-drag-region for frameless window dragging */}
         <header
-          className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800 select-none"
+          className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800/50 select-none"
           data-tauri-drag-region
         >
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pointer-events-none">
@@ -91,7 +91,7 @@ export const Layout: React.FC = () => {
                     placeholder="Search movies, TV shows... (Cmd+K)"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-full py-2 pl-4 pr-10 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-white select-text"
+                    className="w-full bg-zinc-900 border border-zinc-800/50 rounded-full py-2 pl-4 pr-10 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-white select-text"
                   />
                   <button
                     type="submit"
@@ -136,14 +136,14 @@ export const Layout: React.FC = () => {
 
           {/* Mobile Menu */}
           {isMenuOpen && (
-            <div className="md:hidden border-t border-zinc-800 bg-zinc-950 p-4">
+            <div className="md:hidden border-t border-zinc-800/50 bg-zinc-950 p-4">
               <form onSubmit={handleSearch} className="relative mb-4">
                 <input
                   type="text"
                   placeholder="Search..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-3 pl-4 pr-10 text-sm focus:outline-none focus:border-indigo-500 text-white"
+                  className="w-full bg-zinc-900 border border-zinc-800/50 rounded-lg py-3 pl-4 pr-10 text-sm focus:outline-none focus:border-indigo-500 text-white"
                 />
                 <button
                   type="submit"
