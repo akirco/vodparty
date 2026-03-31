@@ -3,6 +3,7 @@ import {
   Check,
   Copy,
   Film,
+  Link,
   Loader2,
   MapPin,
   Maximize,
@@ -78,6 +79,7 @@ export const Player: React.FC = () => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [roomSize, setRoomSize] = useState(1);
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [isCssFullscreen, setIsCssFullscreen] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -158,6 +160,12 @@ export const Player: React.FC = () => {
     navigator.clipboard.writeText(window.location.href);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const copyVideoLink = () => {
+    navigator.clipboard.writeText(currentPlayUrl);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
   };
 
   useEffect(() => {
@@ -256,15 +264,22 @@ export const Player: React.FC = () => {
       if (e.key === "Escape" && isCssFullscreen) {
         setIsCssFullscreen(false);
       }
+      if (e.key === "f" || e.key === "F") {
+        if (
+          document.activeElement?.tagName !== "INPUT" &&
+          document.activeElement?.tagName !== "TEXTAREA"
+        ) {
+          setIsCssFullscreen((prev: boolean) => !prev);
+        }
+      }
     };
 
     if (isCssFullscreen) {
       document.body.style.overflow = "hidden";
-      window.addEventListener("keydown", handleKeyDown);
     } else {
       document.body.style.overflow = "";
-      window.removeEventListener("keydown", handleKeyDown);
     }
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
       document.body.style.overflow = "";
       window.removeEventListener("keydown", handleKeyDown);
@@ -350,7 +365,23 @@ export const Player: React.FC = () => {
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {currentPlayUrl && (
+          <button
+            onClick={copyVideoLink}
+            className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {linkCopied ? (
+              <>
+                <Check className="w-4 h-4" /> Copied
+              </>
+            ) : (
+              <>
+                <Link className="w-4 h-4" /> Copy Link
+              </>
+            )}
+          </button>
+        )}
         {partyId ? (
           <div className="flex items-center gap-3 bg-indigo-500/10 border border-indigo-500/30 px-4 py-2 rounded-full">
             <div className="flex items-center gap-2 text-indigo-400 text-sm font-medium">
@@ -433,7 +464,7 @@ export const Player: React.FC = () => {
             </button>
           </div>
 
-          <div>
+           <div>
             <h1 className="text-3xl font-bold text-white">{video.vod_name}</h1>
             <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-zinc-400">
               <span className="flex items-center gap-1">
