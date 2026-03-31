@@ -146,9 +146,11 @@ export const Player: React.FC = () => {
 
       // Pusher setup for production (use private channel for client events)
       if (isPusherEnabled() && pusherClient) {
+        console.log("[Pusher] Connecting to private-party-" + partyId);
         pusherChannel.current = pusherClient.subscribe(`private-party-${partyId}`);
         
         pusherChannel.current.bind("client-video-action", (data: VideoAction) => {
+          console.log("[Pusher] Received video-action:", data);
           if (!videoRef.current) return;
 
           if (data.sourceId && data.sourceId !== activeSourceId) {
@@ -216,8 +218,15 @@ export const Player: React.FC = () => {
       }
 
       // Pusher for production
-      if (isPusherEnabled() && pusherChannel.current) {
-        pusherChannel.current.trigger("client-video-action", videoActionData);
+      const pusherEnabled = isPusherEnabled();
+      console.log("[Pusher] emit - enabled:", pusherEnabled, "channel:", !!pusherChannel.current, "partyId:", partyId);
+      if (pusherEnabled && pusherChannel.current) {
+        try {
+          console.log("[Pusher] Triggering client-video-action:", videoActionData);
+          pusherChannel.current.trigger("client-video-action", videoActionData);
+        } catch (err) {
+          console.error("[Pusher] Trigger error:", err);
+        }
       }
     }
   };
