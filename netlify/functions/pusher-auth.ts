@@ -18,9 +18,20 @@ const handler: Handler = async (event: HandlerEvent): Promise<HandlerResponse> =
   }
 
   try {
-    const body = event.body ? JSON.parse(event.body) : {};
-    const socketId = body.socket_id;
-    const channelName = body.channel_name;
+    const contentType = event.headers["content-type"] || "";
+    let socketId: string;
+    let channelName: string;
+
+    if (contentType.includes("application/json")) {
+      const body = event.body ? JSON.parse(event.body) : {};
+      socketId = body.socket_id;
+      channelName = body.channel_name;
+    } else {
+      // URL-encoded form data
+      const params = new URLSearchParams(event.body || "");
+      socketId = params.get("socket_id") || "";
+      channelName = params.get("channel_name") || "";
+    }
 
     if (!socketId || !channelName) {
       return {
