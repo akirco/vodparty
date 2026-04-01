@@ -189,6 +189,32 @@ export const Settings: React.FC = () => {
             <Upload className="w-4 h-4" /> Batch Import
           </button>
         </div>
+        <form
+          onSubmit={handleAddSource}
+          className="flex flex-wrap gap-3 pt-4 border-t border-zinc-800/50"
+        >
+          <input
+            type="text"
+            placeholder="Type (e.g. m3u8)"
+            value={newType}
+            onChange={(e) => setNewType(e.target.value)}
+            className="w-32 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+          />
+          <input
+            type="url"
+            placeholder="https://.../api.php/provide/vod/"
+            value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
+            className="flex-1 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm font-mono"
+            required
+          />
+          <button
+            type="submit"
+            className="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shrink-0"
+          >
+            <Plus className="w-4 h-4" /> Add
+          </button>
+        </form>
 
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
           <button
@@ -278,33 +304,6 @@ export const Settings: React.FC = () => {
             </div>
           ))}
         </div>
-
-        <form
-          onSubmit={handleAddSource}
-          className="flex flex-wrap gap-3 pt-4 border-t border-zinc-800/50"
-        >
-          <input
-            type="text"
-            placeholder="Type (e.g. m3u8)"
-            value={newType}
-            onChange={(e) => setNewType(e.target.value)}
-            className="w-32 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
-          />
-          <input
-            type="url"
-            placeholder="https://.../api.php/provide/vod/"
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
-            className="flex-1 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm font-mono"
-            required
-          />
-          <button
-            type="submit"
-            className="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shrink-0"
-          >
-            <Plus className="w-4 h-4" /> Add
-          </button>
-        </form>
       </div>
 
       {categories.length > 0 && (
