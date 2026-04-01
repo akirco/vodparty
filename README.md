@@ -63,7 +63,9 @@ PUSHER_CLUSTER=your_cluster
 
 ### Pusher配置要点
 
-**重要：** 在Pusher Dashboard设置中需要启用 **"Enable Client Events"**，这样才能允许客户端之间直接通信。
+**重要：**
+
+- 在Pusher Dashboard设置中需要启用 **"Enable Client Events"**，这样才能允许客户端之间直接通信。
 
 配置步骤：
 
@@ -71,6 +73,8 @@ PUSHER_CLUSTER=your_cluster
 2. 选择你的App
 3. 进入 "APP Settings"
 4. 启用 "Enable Client Events" 选项
+
+- Netlify 环境变量 **"Contains secret values"**，不要勾选
 
 ## 部署
 
