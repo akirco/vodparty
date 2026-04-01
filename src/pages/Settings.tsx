@@ -1,11 +1,16 @@
 import {
+  CheckCircle,
   CheckCircle2,
   Eye,
   EyeOff,
+  Loader2,
   Plus,
   Save,
   Star,
   Trash2,
+  Upload,
+  X,
+  XCircle,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import {
@@ -25,18 +30,21 @@ export const Settings: React.FC = () => {
   const [primaryId, setPrimaryId] = useState("");
   const [saved, setSaved] = useState(false);
 
-  const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
+  const [newType, setNewType] = useState("");
+
+  const [showBatchImport, setShowBatchImport] = useState(false);
+  const [batchInput, setBatchInput] = useState("");
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<number[]>([]);
 
   useEffect(() => {
-    if (getPrimarySource()) {
-      setPrimaryId(getPrimarySource().id);
+    const primary = getPrimarySource();
+    if (primary) {
+      setPrimaryId(primary.id);
     }
     setSources(getSources());
-
     setHiddenCategories(getHiddenCategories());
 
     const loadCategories = async () => {
@@ -45,31 +53,81 @@ export const Settings: React.FC = () => {
         if (res.class) {
           setCategories(res.class);
         }
-      } catch (error) {
-        // console.error("Failed to load categories", error);
-      }
+      } catch (error) {}
     };
     loadCategories();
   }, []);
+
+  const testSource = async (url: string): Promise<"valid" | "invalid"> => {
+    try {
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) return "invalid";
+      const data = await res.json();
+      return data.code === 200 ? "valid" : "invalid";
+    } catch {
+      return "invalid";
+    }
+  };
+
+  const handleAddSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUrl) return;
+    if (sources.some((s) => s.url === newUrl)) return;
+    const newSource: ApiSource = {
+      id: Date.now().toString(),
+      name: `${Date.now().toString().slice(-4)}${Math.random().toString(36).slice(2, 6)}`,
+      url: newUrl,
+      type: newType,
+      status: "testing",
+    };
+    setSources([...sources, newSource]);
+    setNewUrl("");
+    setNewType("");
+
+    const status = await testSource(newUrl);
+    setSources((prev) =>
+      prev.map((s) => (s.id === newSource.id ? { ...s, status } : s)),
+    );
+    const updatedSources = sources.map((s) =>
+      s.id === newSource.id ? { ...s, status } : s,
+    );
+    saveSources(updatedSources, primaryId);
+  };
+
+  const handleBatchImport = async () => {
+    const lines = batchInput.split("\n").filter((line) => line.trim());
+    const existingUrls = new Set(sources.map((s) => s.url));
+    const newSources: ApiSource[] = lines
+      .map((line, index) => ({
+        id: (Date.now() + index).toString(),
+        name: `${Date.now().toString().slice(-4)}${Math.random().toString(36).slice(2, 6)}`,
+        url: line.trim(),
+        type: "",
+        status: "testing" as const,
+      }))
+      .filter((s) => !existingUrls.has(s.url));
+    setSources([...sources, ...newSources]);
+    setBatchInput("");
+    setShowBatchImport(false);
+
+    const testedSources = [...sources];
+    for (const source of newSources) {
+      const status = await testSource(source.url);
+      const idx = testedSources.findIndex((s) => s.id === source.id);
+      if (idx >= 0) {
+        testedSources[idx] = { ...source, status };
+      }
+    }
+    setSources(testedSources);
+    saveSources(testedSources, primaryId);
+  };
 
   const handleSave = () => {
     saveSources(sources, primaryId);
     saveHiddenCategories(hiddenCategories);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
-  };
-
-  const handleAddSource = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newName || !newUrl) return;
-    const newSource: ApiSource = {
-      id: Date.now().toString(),
-      name: newName,
-      url: newUrl,
-    };
-    setSources([...sources, newSource]);
-    setNewName("");
-    setNewUrl("");
   };
 
   const handleRemoveSource = (id: string) => {
@@ -114,7 +172,15 @@ export const Settings: React.FC = () => {
         </div>
       </div>
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
-        <h3 className="text-xl font-semibold text-white">API Sources</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-semibold text-white">API Sources</h3>
+          <button
+            onClick={() => setShowBatchImport(true)}
+            className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Upload className="w-4 h-4" /> Batch Import
+          </button>
+        </div>
 
         <div className="space-y-3">
           {sources.map((source) => (
@@ -132,10 +198,30 @@ export const Settings: React.FC = () => {
                       Primary
                     </span>
                   )}
+                  {source.status === "valid" && (
+                    <span className="flex items-center gap-1 text-emerald-500 text-xs">
+                      <CheckCircle className="w-3.5 h-3.5" /> Valid
+                    </span>
+                  )}
+                  {source.status === "invalid" && (
+                    <span className="flex items-center gap-1 text-red-500 text-xs">
+                      <XCircle className="w-3.5 h-3.5" /> Invalid
+                    </span>
+                  )}
+                  {source.status === "testing" && (
+                    <span className="flex items-center gap-1 text-yellow-500 text-xs">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing
+                    </span>
+                  )}
                 </div>
                 <p className="text-zinc-500 text-sm truncate font-mono mt-1">
                   {source.url}
                 </p>
+                {source.type && (
+                  <p className="text-indigo-500 text-xs mt-0.5">
+                    Type: {source.type}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {primaryId !== source.id && (
@@ -165,18 +251,17 @@ export const Settings: React.FC = () => {
         >
           <input
             type="text"
-            placeholder="Source Name (e.g. My API)"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            className="flex-1 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
-            required
+            placeholder="Type (e.g. m3u8)"
+            value={newType}
+            onChange={(e) => setNewType(e.target.value)}
+            className="w-32 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
           />
           <input
             type="url"
             placeholder="https://.../api.php/provide/vod/"
             value={newUrl}
             onChange={(e) => setNewUrl(e.target.value)}
-            className="flex-2 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm font-mono"
+            className="flex-1 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm font-mono"
             required
           />
           <button
@@ -221,6 +306,48 @@ export const Settings: React.FC = () => {
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {showBatchImport && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 w-full max-w-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-white">
+                Batch Import URLs
+              </h3>
+              <button
+                onClick={() => setShowBatchImport(false)}
+                className="p-2 text-zinc-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-zinc-400 text-sm">
+              Enter one URL per line. Names will be auto-generated.
+            </p>
+            <textarea
+              value={batchInput}
+              onChange={(e) => setBatchInput(e.target.value)}
+              placeholder="https://example.com/api1.php&#10;https://example.com/api2.php&#10;https://example.com/api3.php"
+              className="w-full h-64 bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-3 text-white focus:border-indigo-500 focus:outline-none text-sm font-mono resize-none"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowBatchImport(false)}
+                className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBatchImport}
+                disabled={!batchInput.trim()}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                <Upload className="w-4 h-4" /> Import
+              </button>
+            </div>
           </div>
         </div>
       )}

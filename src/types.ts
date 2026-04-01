@@ -2,6 +2,8 @@ export interface ApiSource {
   id: string;
   name: string;
   url: string;
+  type: string;
+  status?: "valid" | "invalid" | "testing";
 }
 
 export interface PlayUrl {

@@ -164,7 +164,9 @@ export const Player: React.FC = () => {
             }
             if (data.playUrl && data.playUrl !== currentPlayUrl) {
               setCurrentPlayUrl(data.playUrl);
-              setActiveEpisode(data.episodeIndex);
+              if (data.episodeIndex !== undefined) {
+                setActiveEpisode(data.episodeIndex);
+              }
             }
 
             isRemoteUpdate.current = true;
