@@ -39,6 +39,13 @@ export const Settings: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<number[]>([]);
 
+  const [selectedType, setSelectedType] = useState<string>("");
+
+  const allTypes = [...new Set(sources.map((s) => s.type).filter(Boolean))];
+  const filteredSources = selectedType
+    ? sources.filter((s) => s.type === selectedType)
+    : sources;
+
   useEffect(() => {
     const primary = getPrimarySource();
     if (primary) {
@@ -103,12 +110,13 @@ export const Settings: React.FC = () => {
         id: (Date.now() + index).toString(),
         name: `${Date.now().toString().slice(-4)}${Math.random().toString(36).slice(2, 6)}`,
         url: line.trim(),
-        type: "",
+        type: newType,
         status: "testing" as const,
       }))
       .filter((s) => !existingUrls.has(s.url));
     setSources([...sources, ...newSources]);
     setBatchInput("");
+    setNewType("");
     setShowBatchImport(false);
 
     const testedSources = [...sources];
@@ -182,8 +190,34 @@ export const Settings: React.FC = () => {
           </button>
         </div>
 
+        <div className="flex items-center gap-2 overflow-x-auto pb-2">
+          <button
+            onClick={() => setSelectedType("")}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+              selectedType === ""
+                ? "bg-indigo-600 text-white"
+                : "bg-zinc-800 text-zinc-400 hover:text-white"
+            }`}
+          >
+            All ({sources.length})
+          </button>
+          {allTypes.map((type) => (
+            <button
+              key={type}
+              onClick={() => setSelectedType(type)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                selectedType === type
+                  ? "bg-indigo-600 text-white"
+                  : "bg-zinc-800 text-zinc-400 hover:text-white"
+              }`}
+            >
+              {type} ({sources.filter((s) => s.type === type).length})
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-3">
-          {sources.map((source) => (
+          {filteredSources.map((source) => (
             <div
               key={source.id}
               className={`flex items-center justify-between p-4 rounded-lg border ${primaryId === source.id ? "border-indigo-500 bg-indigo-500/10" : "border-zinc-800/50 bg-zinc-950"}`}
@@ -327,6 +361,13 @@ export const Settings: React.FC = () => {
             <p className="text-zinc-400 text-sm">
               Enter one URL per line. Names will be auto-generated.
             </p>
+            <input
+              type="text"
+              placeholder="Type (e.g. m3u8)"
+              value={newType}
+              onChange={(e) => setNewType(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            />
             <textarea
               value={batchInput}
               onChange={(e) => setBatchInput(e.target.value)}
