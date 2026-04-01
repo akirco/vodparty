@@ -63,6 +63,19 @@ export const Settings: React.FC = () => {
       } catch (error) {}
     };
     loadCategories();
+
+    const testAllSources = async () => {
+      const allSources = getSources();
+      const tested = await Promise.all(
+        allSources.map(async (s) => ({
+          ...s,
+          status: s.url ? await testSource(s.url) : s.status,
+        })),
+      );
+      setSources(tested);
+      saveSources(tested, primary?.id || "");
+    };
+    testAllSources();
   }, []);
 
   const testSource = async (url: string): Promise<"valid" | "invalid"> => {
@@ -88,17 +101,16 @@ export const Settings: React.FC = () => {
       type: newType,
       status: "testing",
     };
-    setSources([...sources, newSource]);
+    const allSourcesWithNew = [...sources, newSource];
+    setSources(allSourcesWithNew);
     setNewUrl("");
     setNewType("");
 
     const status = await testSource(newUrl);
-    setSources((prev) =>
-      prev.map((s) => (s.id === newSource.id ? { ...s, status } : s)),
-    );
-    const updatedSources = sources.map((s) =>
+    const updatedSources = allSourcesWithNew.map((s) =>
       s.id === newSource.id ? { ...s, status } : s,
     );
+    setSources(updatedSources);
     saveSources(updatedSources, primaryId);
   };
 
@@ -119,16 +131,16 @@ export const Settings: React.FC = () => {
     setNewType("");
     setShowBatchImport(false);
 
-    const testedSources = [...sources];
+    const allSourcesWithNew = [...sources, ...newSources];
     for (const source of newSources) {
       const status = await testSource(source.url);
-      const idx = testedSources.findIndex((s) => s.id === source.id);
+      const idx = allSourcesWithNew.findIndex((s) => s.id === source.id);
       if (idx >= 0) {
-        testedSources[idx] = { ...source, status };
+        allSourcesWithNew[idx] = { ...source, status };
       }
     }
-    setSources(testedSources);
-    saveSources(testedSources, primaryId);
+    setSources(allSourcesWithNew);
+    saveSources(allSourcesWithNew, primaryId);
   };
 
   const handleSave = () => {
