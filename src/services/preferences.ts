@@ -1,16 +1,15 @@
-const HIDDEN_CATEGORIES_KEY = 'apple_cms_hidden_categories';
+import { storage } from './storage';
 
-export const getHiddenCategories = (): number[] => {
+const getHiddenCategoriesKey = (sourceId: string) => 
+  `apple_cms_hidden_categories_${sourceId}`;
+
+export const getHiddenCategories = async (sourceId: string): Promise<number[]> => {
   if (typeof window === 'undefined') return [];
-  try {
-    const stored = localStorage.getItem(HIDDEN_CATEGORIES_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+  const stored = await storage.get<number[]>(getHiddenCategoriesKey(sourceId));
+  return stored || [];
 };
 
-export const saveHiddenCategories = (hiddenIds: number[]) => {
+export const saveHiddenCategories = async (sourceId: string, hiddenIds: number[]) => {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(HIDDEN_CATEGORIES_KEY, JSON.stringify(hiddenIds));
+  await storage.set(getHiddenCategoriesKey(sourceId), hiddenIds);
 };

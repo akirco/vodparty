@@ -1,4 +1,5 @@
 import {
+  ArrowDownUp,
   Calendar,
   Check,
   Copy,
@@ -17,9 +18,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { HlsPlayer } from "../components/HlsPlayer";
-import { isPusherEnabled, pusherClient } from "../config/pusher";
+import { initPusherClient, isPusherEnabled } from "../config/pusher";
 import { fetchVideoDetails, fetchVideos, getSources } from "../services/api";
 import { getHistory, saveHistoryItem } from "../services/history";
+import { isTauri } from "../utils";
 import { ApiSource, PlayUrl, Video } from "../types";
 
 interface PlayGroup {
@@ -63,7 +65,8 @@ const parsePlayUrls = (
             return { name: parts[0] || `Ep ${epIndex + 1}`, url: parts[1] };
           }
           return { name: `Ep ${epIndex + 1}`, url: ep };
-        });
+        })
+        .filter((ep) => ep.url.toLowerCase().includes(".m3u8"));
       return { groupName, urls };
     })
     .filter((g) => g.urls.length > 0);
@@ -85,6 +88,7 @@ export const Player: React.FC = () => {
   const [currentPlayUrl, setCurrentPlayUrl] = useState<string>("");
   const [activeEpisode, setActiveEpisode] = useState<number>(0);
   const [initialTime, setInitialTime] = useState<number>(0);
+  const [reverseEpisodes, setReverseEpisodes] = useState(false);
 
   // Watch Party State
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -98,6 +102,7 @@ export const Player: React.FC = () => {
   const lastSaveTime = useRef(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pusherChannel = useRef<any>(null);
+  const pusherClientRef = useRef<any>(null);
 
   useEffect(() => {
     if (partyId) {
@@ -108,6 +113,22 @@ export const Player: React.FC = () => {
 
       newSocket.on("room-size", (size: number) => {
         setRoomSize(size);
+      });
+
+      newSocket.on("current-video-state", (data: any) => {
+        if (data.sourceId && data.sourceId !== activeSourceId) {
+          setActiveSourceId(data.sourceId);
+        }
+        if (data.groupName && data.groupName !== activeGroupName) {
+          setActiveGroupName(data.groupName);
+        }
+        if (data.playUrl && data.playUrl !== currentPlayUrl) {
+          setCurrentPlayUrl(data.playUrl);
+          setActiveEpisode(data.episodeIndex || 0);
+        }
+        if (data.id && id !== data.id.toString()) {
+          navigate(`/video/${data.sourceId}/${data.id}${searchParams.toString()}`);
+        }
       });
 
       newSocket.on("video-action", (data) => {
@@ -144,61 +165,90 @@ export const Player: React.FC = () => {
         }, 500);
       });
 
-      if (isPusherEnabled() && pusherClient) {
-        console.log("[Pusher] Connecting to private-party-" + partyId);
-        pusherChannel.current = pusherClient.subscribe(
-          `private-party-${partyId}`,
-        );
+      // Initialize Pusher client
+      initPusherClient().then(async (client) => {
+        pusherClientRef.current = client;
+        
+        if (client) {
+          const pusherEnabled = await isPusherEnabled();
+          if (pusherEnabled) {
+            console.log("[Pusher] Connecting to private-party-" + partyId);
+            pusherChannel.current = client.subscribe(
+              `private-party-${partyId}`,
+            );
 
-        pusherChannel.current.bind(
-          "client-video-action",
-          (data: VideoAction) => {
-            console.log("[Pusher] Received video-action:", data);
-            if (!videoRef.current) return;
+            
 
-            if (data.sourceId && data.sourceId !== activeSourceId) {
-              setActiveSourceId(data.sourceId);
-            }
-            if (data.groupName && data.groupName !== activeGroupName) {
-              setActiveGroupName(data.groupName);
-            }
-            if (data.playUrl && data.playUrl !== currentPlayUrl) {
-              setCurrentPlayUrl(data.playUrl);
-              if (data.episodeIndex !== undefined) {
-                setActiveEpisode(data.episodeIndex);
+            pusherChannel.current.bind(
+              "client-request-video-state",
+              () => {
+                console.log("[Pusher] Received request-video-state, broadcasting current state");
+                const videoState = {
+                  id: id,
+                  sourceId: activeSourceId,
+                  playUrl: currentPlayUrl,
+                  groupName: activeGroupName,
+                  episodeIndex: activeEpisode,
+                };
+                try {
+                  pusherChannel.current.trigger("client-current-video-state", videoState);
+                } catch (err) {
+                  console.error("[Pusher] Trigger current-video-state error:", err);
+                }
               }
-            }
+            );
 
-            isRemoteUpdate.current = true;
+            pusherChannel.current.bind(
+              "client-video-action",
+              (data: VideoAction) => {
+                console.log("[Pusher] Received video-action:", data);
+                if (!videoRef.current) return;
 
-            if (data.action === "play") {
-              if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
-                videoRef.current.currentTime = data.time;
-              }
-              videoRef.current.play().catch(console.error);
-            } else if (data.action === "pause") {
-              videoRef.current.currentTime = data.time;
-              videoRef.current.pause();
-            } else if (data.action === "seek") {
-              videoRef.current.currentTime = data.time;
-            }
+                if (data.sourceId && data.sourceId !== activeSourceId) {
+                  setActiveSourceId(data.sourceId);
+                }
+                if (data.groupName && data.groupName !== activeGroupName) {
+                  setActiveGroupName(data.groupName);
+                }
+                if (data.playUrl && data.playUrl !== currentPlayUrl) {
+                  setCurrentPlayUrl(data.playUrl);
+                  if (data.episodeIndex !== undefined) {
+                    setActiveEpisode(data.episodeIndex);
+                  }
+                }
 
-            setTimeout(() => {
-              isRemoteUpdate.current = false;
-            }, 500);
-          },
-        );
+                isRemoteUpdate.current = true;
 
-        pusherChannel.current.bind("pusher:subscription_succeeded", () => {
-          setRoomSize((prev: number) => prev + 1);
-        });
-      }
+                if (data.action === "play") {
+                  if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
+                    videoRef.current.currentTime = data.time;
+                  }
+                  videoRef.current.play().catch(console.error);
+                } else if (data.action === "pause") {
+                  videoRef.current.currentTime = data.time;
+                  videoRef.current.pause();
+                } else if (data.action === "seek") {
+                  videoRef.current.currentTime = data.time;
+                }
+
+                setTimeout(() => {
+                  isRemoteUpdate.current = false;
+                }, 500);
+              },
+            );
+
+            pusherChannel.current.bind("pusher:subscription_succeeded", () => {
+              setRoomSize((prev: number) => prev + 1);
+            });
+          }
+        }
+      });
 
       return () => {
         newSocket.close();
         if (pusherChannel.current) {
           pusherChannel.current.unbind_all();
-          pusherClient?.unsubscribe(`private-party-${partyId}`);
+          pusherClientRef.current?.unsubscribe(`private-party-${partyId}`);
         }
       };
     }
@@ -224,42 +274,68 @@ export const Player: React.FC = () => {
       }
 
       // Pusher for production
-      const pusherEnabled = isPusherEnabled();
-      console.log(
-        "[Pusher] emit - enabled:",
-        pusherEnabled,
-        "channel:",
-        !!pusherChannel.current,
-        "partyId:",
-        partyId,
-      );
-      if (pusherEnabled && pusherChannel.current) {
-        try {
-          console.log(
-            "[Pusher] Triggering client-video-action:",
-            videoActionData,
-          );
-          pusherChannel.current.trigger("client-video-action", videoActionData);
-        } catch (err) {
-          console.error("[Pusher] Trigger error:", err);
+      isPusherEnabled().then((pusherEnabled) => {
+        console.log(
+          "[Pusher] emit - enabled:",
+          pusherEnabled,
+          "channel:",
+          !!pusherChannel.current,
+          "partyId:",
+          partyId,
+        );
+        if (pusherEnabled && pusherChannel.current) {
+          try {
+            console.log(
+              "[Pusher] Triggering client-video-action:",
+              videoActionData,
+            );
+            pusherChannel.current.trigger("client-video-action", videoActionData);
+          } catch (err) {
+            console.error("[Pusher] Trigger error:", err);
+          }
         }
-      }
+      });
     }
   };
 
-  const handleCreateParty = () => {
+const handleCreateParty = () => {
     const newPartyId = Math.random().toString(36).substring(2, 9);
     setSearchParams({ party: newPartyId });
   };
 
+  const broadcastVideoState = () => {
+    if (!partyId || !pusherChannel.current) return;
+    const videoState = {
+      id: id,
+      sourceId: activeSourceId,
+      playUrl: currentPlayUrl,
+      groupName: activeGroupName,
+      episodeIndex: activeEpisode,
+    };
+    console.log("[Pusher] Broadcasting video state:", videoState);
+    try {
+      pusherChannel.current.trigger("client-current-video-state", videoState);
+    } catch (err) {
+      console.error("[Pusher] Broadcast error:", err);
+    }
+  };
+
   const copyPartyLink = () => {
-    navigator.clipboard.writeText(window.location.href);
+    if (isTauri()) {
+      navigator.clipboard.writeText(partyId || "");
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const copyVideoLink = () => {
-    navigator.clipboard.writeText(currentPlayUrl);
+    if (isTauri()) {
+      navigator.clipboard.writeText(currentPlayUrl);
+    } else {
+      navigator.clipboard.writeText(currentPlayUrl);
+    }
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
   };
@@ -284,7 +360,7 @@ export const Player: React.FC = () => {
 
           setAggregatedSources([initialSource]);
 
-          const history = getHistory();
+          const history = await getHistory();
           const historyItem = history.find((h) => h.videoId === data.vod_id);
 
           if (historyItem) {
@@ -353,6 +429,16 @@ export const Player: React.FC = () => {
   }, [id, sourceId]);
 
   useEffect(() => {
+    if (!loading && partyId && currentPlayUrl) {
+      isPusherEnabled().then((enabled) => {
+        if (enabled) {
+          setTimeout(broadcastVideoState, 500);
+        }
+      });
+    }
+  }, [loading, partyId, currentPlayUrl]);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isCssFullscreen) {
         setIsCssFullscreen(false);
@@ -379,7 +465,7 @@ export const Player: React.FC = () => {
     };
   }, [isCssFullscreen]);
 
-  const handleTimeUpdate = () => {
+  const handleTimeUpdate = async () => {
     if (!videoRef.current || !activeAggSource) return;
     const currentTime = videoRef.current.currentTime;
     const duration = videoRef.current.duration;
@@ -388,7 +474,7 @@ export const Player: React.FC = () => {
       currentTime - lastSaveTime.current > 5 ||
       currentTime < lastSaveTime.current
     ) {
-      saveHistoryItem({
+      await saveHistoryItem({
         videoId: activeAggSource.video.vod_id,
         video: activeAggSource.video,
         sourceId: activeSourceId,
@@ -481,7 +567,7 @@ export const Player: React.FC = () => {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
               </span>
-              Watch Party Active
+              {isTauri() ? `Party: ${partyId}` : "Watch Party Active"}
             </div>
             <div className="w-px h-4 bg-indigo-500/30 mx-1"></div>
             <div className="flex items-center gap-1.5 text-zinc-300 text-sm">
@@ -498,8 +584,13 @@ export const Player: React.FC = () => {
               ) : (
                 <Copy className="w-4 h-4" />
               )}
-              {copied ? "Copied!" : "Copy Link"}
+              {copied ? "Copied!" : isTauri() ? "Copy Code" : "Copy Link"}
             </button>
+          </div>
+        ) : partyId ? (
+          <div className="flex items-center gap-2 text-indigo-400 text-sm">
+            <UsersRound className="w-4 h-4" />
+            Hosting Party: {partyId}
           </div>
         ) : (
           <button
@@ -507,7 +598,7 @@ export const Player: React.FC = () => {
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
             <UsersRound className="w-4 h-4" />
-            Create Watch Party
+            Start Watch Party
           </button>
         )}
       </div>
@@ -679,12 +770,28 @@ export const Player: React.FC = () => {
           {/* Episodes List */}
           {activeGroup && activeGroup.urls.length > 0 && (
             <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
-              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
-                <PlayCircle className="w-5 h-5 text-indigo-500" />
-                Episodes ({activeGroup.urls.length})
-              </h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold flex items-center gap-2 text-white">
+                  <PlayCircle className="w-5 h-5 text-indigo-500" />
+                  Episodes ({activeGroup.urls.length})
+                </h3>
+                <button
+                  onClick={() => setReverseEpisodes(!reverseEpisodes)}
+                  className={`p-2 rounded-lg text-sm font-medium transition-colors ${
+                    reverseEpisodes
+                      ? "bg-indigo-600 text-white"
+                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+                  }`}
+                  title={reverseEpisodes ? "Normal order" : "Reverse order"}
+                >
+                  <ArrowDownUp className="w-4 h-4" />
+                </button>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2 max-h-100 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
-                {activeGroup.urls.map((ep, index) => (
+                {(reverseEpisodes
+                  ? [...activeGroup.urls].reverse()
+                  : activeGroup.urls
+                ).map((ep, index) => (
                   <button
                     key={index}
                     onClick={() => {

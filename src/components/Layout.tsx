@@ -62,7 +62,7 @@ export const Layout: React.FC = () => {
           className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800/50 select-none"
           data-tauri-drag-region
         >
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pointer-events-none">
+          <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 pointer-events-none">
             <div className="flex items-center justify-between h-16 pointer-events-auto">
               <div
                 className="flex items-center gap-4 w-24"
@@ -160,7 +160,7 @@ export const Layout: React.FC = () => {
         </header>
 
         {/* Main Content */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 select-none">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-2 sm:px-4 lg:px-6 py-8 select-none">
           <Outlet />
         </main>
 

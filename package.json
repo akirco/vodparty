@@ -5,15 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "node server.ts",
-    "build": "vite build && tsc -p tsconfig.app.json",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "start": "node ./dist/server.js"
+    "start": "node ./dist/server.js",
+    "tauri": "tauri"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.2.2",
-    "@vitejs/plugin-react": "^6.0.1",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "hls.js": "^1.6.15",
@@ -25,10 +24,16 @@
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.2",
     "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "@netlify/functions": "^5.1.5",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-store": "^2.4.2"
   },
   "devDependencies": {
-    "@netlify/functions": "^5.1.5",
+    "@tailwindcss/vite": "^4.2.2",
+    "@tauri-apps/cli": "^2.10.1",
+    "@vitejs/plugin-react": "^6.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",

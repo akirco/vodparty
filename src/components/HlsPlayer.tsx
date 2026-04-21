@@ -64,6 +64,7 @@ export const HlsPlayer: React.FC<HlsPlayerProps> = ({
       ref={videoRef}
       className="w-full h-full bg-black"
       controls
+      autoPlay
       poster={poster}
       playsInline
       onPlay={onPlay}

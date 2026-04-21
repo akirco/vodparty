@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   CheckCircle,
   CheckCircle2,
@@ -24,11 +25,37 @@ import {
   saveHiddenCategories,
 } from "../services/preferences";
 import { ApiSource, Category } from "../types";
+import { isTauri } from "../utils";
+import { getPusherSettings, savePusherSettings, getProxySettings, saveProxySettings } from "../config/pusher";
+
+const testSource = async (url: string): Promise<"valid" | "invalid"> => {
+  try {
+    const testUrl = url.includes("?") ? `${url}&ac=list` : `${url}?ac=list`;
+    let data: any;
+    if (isTauri()) {
+      const result = await invoke<string>("proxy_request", { url: testUrl });
+      data = JSON.parse(result);
+    } else {
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(testUrl)}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) return "invalid";
+      data = await res.json();
+    }
+    if (data.list || [0, 1, 200].includes(data.code)) {
+      return "valid";
+    }
+    return "invalid";
+  } catch (e) {
+    console.error("testSource error:", e);
+    return "invalid";
+  }
+};
 
 export const Settings: React.FC = () => {
   const [sources, setSources] = useState<ApiSource[]>([]);
   const [primaryId, setPrimaryId] = useState("");
   const [saved, setSaved] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
 
   const [newUrl, setNewUrl] = useState("");
   const [newType, setNewType] = useState("");
@@ -38,6 +65,14 @@ export const Settings: React.FC = () => {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<number[]>([]);
+
+  const [pusherAppId, setPusherAppId] = useState("");
+  const [pusherKey, setPusherKey] = useState("");
+  const [pusherSecret, setPusherSecret] = useState("");
+  const [pusherCluster, setPusherCluster] = useState("ap1");
+
+  const [httpProxy, setHttpProxy] = useState("");
+  const [httpsProxy, setHttpsProxy] = useState("");
 
   const [selectedType, setSelectedType] = useState<string>("");
 
@@ -50,9 +85,10 @@ export const Settings: React.FC = () => {
     const primary = getPrimarySource();
     if (primary) {
       setPrimaryId(primary.id);
+      getHiddenCategories(primary.id).then(setHiddenCategories);
     }
-    setSources(getSources());
-    setHiddenCategories(getHiddenCategories());
+    const initialSources = getSources();
+    setSources(initialSources);
 
     const loadCategories = async () => {
       try {
@@ -76,19 +112,19 @@ export const Settings: React.FC = () => {
       saveSources(tested, primary?.id || "");
     };
     testAllSources();
-  }, []);
 
-  const testSource = async (url: string): Promise<"valid" | "invalid"> => {
-    try {
-      const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-      const res = await fetch(proxyUrl);
-      if (!res.ok) return "invalid";
-      const data = await res.json();
-      return data.code === 200 ? "valid" : "invalid";
-    } catch {
-      return "invalid";
-    }
-  };
+    getPusherSettings().then((settings) => {
+      setPusherAppId(settings.app_id);
+      setPusherKey(settings.key);
+      setPusherSecret(settings.secret);
+      setPusherCluster(settings.cluster);
+    });
+
+    getProxySettings().then((settings) => {
+      setHttpProxy(settings.http_proxy);
+      setHttpsProxy(settings.https_proxy);
+    });
+  }, []);
 
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,6 +141,7 @@ export const Settings: React.FC = () => {
     setSources(allSourcesWithNew);
     setNewUrl("");
     setNewType("");
+    setHasChanges(true);
 
     const status = await testSource(newUrl);
     const updatedSources = allSourcesWithNew.map((s) =>
@@ -130,6 +167,7 @@ export const Settings: React.FC = () => {
     setBatchInput("");
     setNewType("");
     setShowBatchImport(false);
+    setHasChanges(true);
 
     const allSourcesWithNew = [...sources, ...newSources];
     for (const source of newSources) {
@@ -143,27 +181,38 @@ export const Settings: React.FC = () => {
     saveSources(allSourcesWithNew, primaryId);
   };
 
-  const handleSave = () => {
-    saveSources(sources, primaryId);
-    saveHiddenCategories(hiddenCategories);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+  const handleSave = async () => {
+    try {
+      console.log("[Settings] Saving Pusher:", { pusherAppId, pusherKey, pusherSecret, pusherCluster });
+      await saveSources(sources, primaryId);
+      await saveHiddenCategories(primaryId, hiddenCategories);
+      await savePusherSettings(pusherAppId, pusherKey, pusherSecret, pusherCluster);
+      await saveProxySettings(httpProxy, httpsProxy);
+      setHasChanges(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      console.error("[Settings] Save error:", err);
+    }
   };
 
   const handleRemoveSource = (id: string) => {
     const updated = sources.filter((s) => s.id !== id);
     setSources(updated);
+    setHasChanges(true);
     if (primaryId === id && updated.length > 0) {
       setPrimaryId(updated[0].id);
     }
   };
 
   const toggleCategoryVisibility = (categoryId: number) => {
-    setHiddenCategories((prev) =>
-      prev.includes(categoryId)
+    setHiddenCategories((prev) => {
+      const updated = prev.includes(categoryId)
         ? prev.filter((id) => id !== categoryId)
-        : [...prev, categoryId],
-    );
+        : [...prev, categoryId];
+      setHasChanges(true);
+      return updated;
+    });
   };
 
   return (
@@ -178,15 +227,21 @@ export const Settings: React.FC = () => {
         <div className="flex items-center gap-4 justify-end">
           <button
             onClick={handleSave}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
+            disabled={!hasChanges}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
           >
             <Save className="w-4 h-4" />
-            Save Configuration
+            {hasChanges ? "Save Changes" : "Save Configuration"}
           </button>
           {saved && (
             <span className="flex items-center gap-1 text-emerald-500 text-sm font-medium">
               <CheckCircle2 className="w-4 h-4" />
               Saved successfully
+            </span>
+          )}
+          {hasChanges && !saved && (
+            <span className="flex items-center gap-1 text-amber-500 text-sm font-medium">
+              Unsaved changes
             </span>
           )}
         </div>
@@ -298,7 +353,10 @@ export const Settings: React.FC = () => {
               <div className="flex items-center gap-2 shrink-0">
                 {primaryId !== source.id && (
                   <button
-                    onClick={() => setPrimaryId(source.id)}
+                    onClick={() => {
+                      setPrimaryId(source.id);
+                      setHasChanges(true);
+                    }}
                     className="p-2 text-zinc-400 hover:text-indigo-400 transition-colors"
                     title="Set as Primary"
                   >
@@ -354,6 +412,108 @@ export const Settings: React.FC = () => {
           </div>
         </div>
       )}
+
+      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
+        <h3 className="text-xl font-semibold text-white">
+          Watch Party (Pusher)
+        </h3>
+        <p className="text-zinc-400 text-sm">
+          Configure Pusher for real-time watch party synchronization.
+        </p>
+
+        <div className="grid gap-4">
+          <div>
+            <label className="text-zinc-500 text-sm block mb-2">App ID</label>
+            <input
+              type="text"
+              placeholder="Enter Pusher App ID"
+              value={pusherAppId}
+              onChange={(e) => {
+                setPusherAppId(e.target.value);
+                setHasChanges(true);
+              }}
+              className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-zinc-500 text-sm block mb-2">Key</label>
+            <input
+              type="text"
+              placeholder="Enter Pusher key"
+              value={pusherKey}
+              onChange={(e) => {
+                setPusherKey(e.target.value);
+                setHasChanges(true);
+              }}
+              className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-zinc-500 text-sm block mb-2">Secret</label>
+            <input
+              type="password"
+              placeholder="Enter Pusher secret"
+              value={pusherSecret}
+              onChange={(e) => {
+                setPusherSecret(e.target.value);
+                setHasChanges(true);
+              }}
+              className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-zinc-500 text-sm block mb-2">Cluster</label>
+            <input
+              type="text"
+              placeholder="e.g. ap1"
+              value={pusherCluster}
+              onChange={(e) => {
+                setPusherCluster(e.target.value);
+                setHasChanges(true);
+              }}
+              className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
+        <h3 className="text-xl font-semibold text-white">
+          Proxy Settings
+        </h3>
+        <p className="text-zinc-400 text-sm">
+          Configure proxy for network requests (used when shortcut launching doesn't inherit system proxy).
+        </p>
+
+        <div className="grid gap-4">
+          <div>
+            <label className="text-zinc-500 text-sm block mb-2">HTTP Proxy</label>
+            <input
+              type="text"
+              placeholder="http://127.0.0.1:7890"
+              value={httpProxy}
+              onChange={(e) => {
+                setHttpProxy(e.target.value);
+                setHasChanges(true);
+              }}
+              className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-zinc-500 text-sm block mb-2">HTTPS Proxy</label>
+            <input
+              type="text"
+              placeholder="http://127.0.0.1:7890"
+              value={httpsProxy}
+              onChange={(e) => {
+                setHttpsProxy(e.target.value);
+                setHasChanges(true);
+              }}
+              className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
+            />
+          </div>
+        </div>
+      </div>
 
       {showBatchImport && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

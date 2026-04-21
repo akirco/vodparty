@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* Hide all scrollbars globally */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+/* Hide all WebKit scrollbars globally */
+*::-webkit-scrollbar {
+  display: none;
+}
+
 @theme {
   --color-indigo-50: #eafaf9;
   --color-indigo-100: #cdf3f0;
@@ -22,7 +33,7 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
-  
+
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
     height: 6px;

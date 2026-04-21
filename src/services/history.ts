@@ -1,4 +1,5 @@
 import { Video } from '../types';
+import { storage } from './storage';
 
 export interface HistoryItem {
   videoId: number;
@@ -14,19 +15,15 @@ export interface HistoryItem {
 
 const HISTORY_KEY = 'apple_cms_history';
 
-export const getHistory = (): HistoryItem[] => {
+export const getHistory = async (): Promise<HistoryItem[]> => {
   if (typeof window === 'undefined') return [];
-  try {
-    const stored = localStorage.getItem(HISTORY_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+  const stored = await storage.get<HistoryItem[]>(HISTORY_KEY);
+  return stored || [];
 };
 
-export const saveHistoryItem = (item: HistoryItem) => {
+export const saveHistoryItem = async (item: HistoryItem) => {
   if (typeof window === 'undefined') return;
-  const history = getHistory();
+  const history = await getHistory();
   const existingIndex = history.findIndex(h => h.videoId === item.videoId);
   
   if (existingIndex >= 0) {
@@ -35,20 +32,19 @@ export const saveHistoryItem = (item: HistoryItem) => {
     history.unshift({ ...item, timestamp: Date.now() });
   }
   
-  // Keep last 100 items
   if (history.length > 100) history.pop();
   
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  await storage.set(HISTORY_KEY, history);
 };
 
-export const removeHistoryItem = (videoId: number) => {
+export const removeHistoryItem = async (videoId: number) => {
   if (typeof window === 'undefined') return;
-  const history = getHistory();
+  const history = await getHistory();
   const updated = history.filter(h => h.videoId !== videoId);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+  await storage.set(HISTORY_KEY, updated);
 };
 
-export const clearHistory = () => {
+export const clearHistory = async () => {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(HISTORY_KEY);
+  await storage.remove(HISTORY_KEY);
 };

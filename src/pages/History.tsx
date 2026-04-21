@@ -112,25 +112,26 @@ export const History: React.FC = () => {
   const [history, setHistory] = useState<HistoryItem[]>([]);
 
   useEffect(() => {
-    setHistory(getHistory());
+    getHistory().then(setHistory);
   }, []);
 
-  const handleClear = () => {
+  const handleClear = async () => {
     if (
       window.confirm(
         "Are you sure you want to clear your entire watch history?",
       )
     ) {
-      clearHistory();
+      await clearHistory();
       setHistory([]);
     }
   };
 
-  const handleRemove = (e: React.MouseEvent, videoId: number) => {
+  const handleRemove = async (e: React.MouseEvent, videoId: number) => {
     e.preventDefault();
     e.stopPropagation();
-    removeHistoryItem(videoId);
-    setHistory(getHistory());
+    await removeHistoryItem(videoId);
+    const updated = await getHistory();
+    setHistory(updated);
   };
 
   const formatTime = (seconds: number) => {

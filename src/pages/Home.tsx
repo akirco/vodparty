@@ -1,6 +1,7 @@
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, UsersRound } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { io } from "socket.io-client";
 import { VideoCard } from "../components/VideoCard";
 import {
   fetchCategories,
@@ -9,10 +10,13 @@ import {
 } from "../services/api";
 import { getHiddenCategories } from "../services/preferences";
 import { Category, Video } from "../types";
+import { isTauri } from "../utils";
 
 export const Home: React.FC = () => {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const categoryParam = searchParams.get("category");
+  const partyParam = searchParams.get("party");
   const activeCategory = categoryParam
     ? parseInt(categoryParam, 10)
     : undefined;
@@ -25,19 +29,95 @@ export const Home: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
 
   const [prevCategory, setPrevCategory] = useState(activeCategory);
+  const [socket, setSocket] = useState<any>(null);
+  const [joinPartyInput, setJoinPartyInput] = useState("");
+  const [roomSize, setRoomSize] = useState(1);
 
-  // Reset page and videos when category changes via URL (e.g., browser back button)
   if (activeCategory !== prevCategory) {
     setPrevCategory(activeCategory);
     setPage(1);
     setVideos([]);
   }
 
+  useEffect(() => {
+    if (partyParam) {
+      if (isTauri()) {
+        (async () => {
+          const { initPusherClient, isPusherEnabled } =
+            await import("../config/pusher");
+          const client = await initPusherClient();
+          const enabled = await isPusherEnabled();
+          if (enabled && client) {
+            const channel = client.subscribe(`private-party-${partyParam}`);
+            channel.bind("client-current-video-state", (data: any) => {
+              console.log("[Home] Received current-video-state:", data);
+              if (data.sourceId && data.id) {
+                navigate(
+                  `/video/${data.sourceId}/${data.id}?party=${partyParam}`,
+                );
+              }
+            });
+            channel.bind("pusher:subscription_succeeded", () => {
+              console.log("[Home] Subscribed, requesting current state");
+              setTimeout(() => {
+                try {
+                  channel.trigger("client-request-video-state", {});
+                } catch (e) {
+                  console.error("[Home] Request state error:", e);
+                }
+              }, 1000);
+            });
+            setSocket(channel);
+          }
+        })();
+      } else {
+        const newSocket = io();
+        setSocket(newSocket as any);
+
+        newSocket.emit("join-room", partyParam);
+
+        newSocket.on("room-size", (size: number) => {
+          setRoomSize(size);
+        });
+
+        newSocket.on("current-video-state", (data: any) => {
+          if (data.sourceId && data.id) {
+            navigate(`/video/${data.sourceId}/${data.id}?party=${partyParam}`);
+          }
+        });
+
+        return () => {
+          newSocket.disconnect();
+        };
+      }
+    }
+  }, [partyParam, navigate]);
+
+  const handleJoinParty = () => {
+    if (joinPartyInput.trim()) {
+      setSearchParams({ party: joinPartyInput.trim() });
+      setJoinPartyInput("");
+    }
+  };
+
+  const handleLeaveParty = () => {
+    if (socket) {
+      if (isTauri()) {
+        socket.unsubscribe(`private-party-${partyParam}`);
+      } else {
+        socket.disconnect();
+      }
+    }
+    setSearchParams({});
+    setSocket(null);
+    setRoomSize(1);
+  };
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
-  const primarySource = getPrimarySource();
+  const primarySourceId = getPrimarySource()?.id;
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -51,8 +131,10 @@ export const Home: React.FC = () => {
       }
     };
     loadCategories();
-    setHiddenCategories(getHiddenCategories());
-  }, []);
+    if (primarySourceId) {
+      getHiddenCategories(primarySourceId).then(setHiddenCategories);
+    }
+  }, [primarySourceId]);
 
   useEffect(() => {
     const loadVideos = async () => {
@@ -74,7 +156,7 @@ export const Home: React.FC = () => {
       }
     };
     loadVideos();
-  }, [page, activeCategory]);
+  }, [page, activeCategory, primarySourceId]);
 
   const handleCategoryChange = (
     id?: number,
@@ -141,13 +223,58 @@ export const Home: React.FC = () => {
 
   return (
     <div className="space-y-8">
+      {/* Watch Party */}
+      {partyParam && socket ? (
+        <div className="flex items-center justify-between bg-indigo-500/10 border border-indigo-500/30 px-4 py-3 rounded-lg">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-indigo-400 text-sm font-medium">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+              </span>
+              {isTauri() ? `Party: ${partyParam}` : "Watch Party Active"}
+            </div>
+            <div className="w-px h-4 bg-indigo-500/30"></div>
+            <div className="flex items-center gap-1.5 text-zinc-300 text-sm">
+              <UsersRound className="w-4 h-4" />
+              <span>{roomSize} watching</span>
+            </div>
+          </div>
+          <button
+            onClick={handleLeaveParty}
+            className="text-zinc-400 hover:text-white text-sm"
+          >
+            Leave Party
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 justify-end">
+          <input
+            type="text"
+            placeholder="Enter party code"
+            value={joinPartyInput}
+            onChange={(e) => setJoinPartyInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleJoinParty()}
+            className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm w-40 focus:border-indigo-500 focus:outline-none"
+          />
+          <button
+            onClick={handleJoinParty}
+            disabled={!joinPartyInput.trim()}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            <UsersRound className="w-4 h-4" />
+            Join
+          </button>
+        </div>
+      )}
+
       {/* Categories */}
       <div className="relative group">
         {canScrollLeft && (
           <div className="absolute left-0 top-0 bottom-2 w-16 bg-linear-to-r from-zinc-950 to-transparent z-10 flex items-center justify-start pointer-events-none">
             <button
               onClick={() => scroll("left")}
-              className="p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg ml-1"
+              className="cursor-pointer p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg ml-1"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -161,7 +288,7 @@ export const Home: React.FC = () => {
         >
           <button
             onClick={(e) => handleCategoryChange(undefined, e)}
-            className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium transition-colors shrink-0 ${
+            className={`whitespace-nowrap cursor-pointer px-4 py-2 rounded-full text-sm font-medium transition-colors shrink-0 ${
               activeCategory === undefined
                 ? "bg-indigo-500 text-white"
                 : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"
@@ -175,7 +302,7 @@ export const Home: React.FC = () => {
               <button
                 key={cat.type_id}
                 onClick={(e) => handleCategoryChange(cat.type_id, e)}
-                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium transition-colors shrink-0 ${
+                className={`whitespace-nowrap px-4 py-2 rounded-full cursor-pointer text-sm font-medium transition-colors shrink-0 ${
                   activeCategory === cat.type_id
                     ? "bg-indigo-500 text-white"
                     : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"
@@ -190,7 +317,7 @@ export const Home: React.FC = () => {
           <div className="absolute right-0 top-0 bottom-2 w-16 bg-linear-to-l from-zinc-950 to-transparent z-10 flex items-center justify-end pointer-events-none">
             <button
               onClick={() => scroll("right")}
-              className="p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg mr-1"
+              className="cursor-pointer p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg mr-1"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
@@ -205,7 +332,7 @@ export const Home: React.FC = () => {
             <VideoCard
               key={`${video.vod_id}-${page}`}
               video={video}
-              sourceId={primarySource.id}
+              sourceId={primarySourceId}
             />
           ))}
         </div>
@@ -225,7 +352,7 @@ export const Home: React.FC = () => {
         <div className="flex justify-center py-8">
           <button
             onClick={() => setPage((p) => p + 1)}
-            className="px-6 py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-full font-medium transition-colors"
+            className="cursor-pointer px-6 py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-full font-medium transition-colors"
           >
             Load More
           </button>

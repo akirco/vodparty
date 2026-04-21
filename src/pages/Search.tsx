@@ -11,7 +11,7 @@ export const Search: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   
-  const primarySource = getPrimarySource();
+  const primarySourceId = getPrimarySource()?.id;
 
   useEffect(() => {
     const loadSearch = async () => {
@@ -31,7 +31,7 @@ export const Search: React.FC = () => {
       }
     };
     loadSearch();
-  }, [query]);
+  }, [query, primarySourceId]);
 
   return (
     <div className="space-y-6">
@@ -46,7 +46,7 @@ export const Search: React.FC = () => {
       ) : videos.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
           {videos.map(video => (
-            <VideoCard key={video.vod_id} video={video} sourceId={primarySource.id} />
+            <VideoCard key={video.vod_id} video={video} sourceId={primarySourceId} />
           ))}
         </div>
       ) : (
