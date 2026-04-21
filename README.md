@@ -4,6 +4,10 @@
 
 > 支持任意采集m3u8 json接口，示例：https://example.xx/api.php/provide/vod/ (自行google)
 
+## 预览
+
+![](./screenshot.png)
+
 ## 快速开始
 
 ### 前置要求
@@ -31,6 +35,27 @@ pnpm dev
 
 ```bash
 pnpm build
+```
+
+### 桌面端构建
+
+```bash
+pnpm tauri build --debug
+
+# or
+
+pnpm tauri build
+
+```
+
+### 桌面端安装(archlinux)
+
+```bash
+sudo pacman -S gtk
+
+debtap -Q ./src-tauri/target/release/bundle/deb/synchive_0.1.0_amd64.deb
+
+sudo pacman -U ./src-tauri/target/release/bundle/deb/synchive-0.1.0-1-x86_64.pkg.tar.zst
 ```
 
 ## 功能
