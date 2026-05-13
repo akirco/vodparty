@@ -19,7 +19,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { HlsPlayer } from "../components/HlsPlayer";
 import { initPusherClient, isPusherEnabled } from "../config/pusher";
-import { fetchVideoDetails, fetchVideos, getSources } from "../services/api";
+import { ensureSourcesLoaded, fetchVideoDetails, fetchVideos, getSources } from "../services/api";
 import { getHistory, saveHistoryItem } from "../services/history";
 import { isTauri } from "../utils";
 import { ApiSource, PlayUrl, Video } from "../types";
@@ -103,26 +103,157 @@ export const Player: React.FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pusherChannel = useRef<any>(null);
   const pusherClientRef = useRef<any>(null);
+  const activeSourceIdRef = useRef(activeSourceId);
+  const activeGroupNameRef = useRef(activeGroupName);
+  const currentPlayUrlRef = useRef(currentPlayUrl);
+  const activeEpisodeRef = useRef(activeEpisode);
+  const hasRequestedStateRef = useRef(false);
+  const currentPartyIdRef = useRef(partyId);
+  const aggregatedSourcesRef = useRef(aggregatedSources);
+
+  useEffect(() => { activeSourceIdRef.current = activeSourceId; }, [activeSourceId]);
+  useEffect(() => { activeGroupNameRef.current = activeGroupName; }, [activeGroupName]);
+  useEffect(() => { currentPlayUrlRef.current = currentPlayUrl; }, [currentPlayUrl]);
+  useEffect(() => { activeEpisodeRef.current = activeEpisode; }, [activeEpisode]);
+  useEffect(() => { currentPartyIdRef.current = partyId; }, [partyId]);
+  useEffect(() => { aggregatedSourcesRef.current = aggregatedSources; }, [aggregatedSources]);
 
   useEffect(() => {
-    if (partyId) {
-      const newSocket = io();
-      setSocket(newSocket);
+    if (!partyId) return;
 
-      newSocket.emit("join-room", partyId);
+    let socketRef: Socket | null = null;
+    let cleanupSocketIo: (() => void) | null = null;
 
-      newSocket.on("room-size", (size: number) => {
+    const effectPartyId = partyId;
+
+    initPusherClient().then(async (client) => {
+      if (currentPartyIdRef.current !== effectPartyId) return;
+
+      pusherClientRef.current = client;
+
+      if (client) {
+        const pusherEnabled = await isPusherEnabled();
+        if (pusherEnabled) {
+          console.log("[Pusher] Connecting to private-party-" + effectPartyId);
+          pusherChannel.current = client.subscribe(
+            `private-party-${effectPartyId}`,
+          );
+
+          pusherChannel.current.bind(
+            "client-request-video-state",
+            () => {
+              console.log("[Pusher] Received request-video-state, broadcasting current state");
+              const videoState = {
+                id: id,
+                sourceId: activeSourceIdRef.current,
+                playUrl: currentPlayUrlRef.current,
+                groupName: activeGroupNameRef.current,
+                episodeIndex: activeEpisodeRef.current,
+                aggregatedSources: aggregatedSourcesRef.current,
+              };
+              try {
+                pusherChannel.current.trigger("client-current-video-state", videoState);
+              } catch (err) {
+                console.error("[Pusher] Trigger current-video-state error:", err);
+              }
+            },
+          );
+
+          pusherChannel.current.bind(
+            "client-video-action",
+            (data: VideoAction) => {
+              console.log("[Pusher] Received video-action:", data);
+              if (!videoRef.current) return;
+
+              if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
+                setActiveSourceId(data.sourceId);
+              }
+              if (data.groupName && data.groupName !== activeGroupNameRef.current) {
+                setActiveGroupName(data.groupName);
+              }
+              if (data.playUrl && data.playUrl !== currentPlayUrlRef.current) {
+                setCurrentPlayUrl(data.playUrl);
+                if (data.episodeIndex !== undefined) {
+                  setActiveEpisode(data.episodeIndex);
+                }
+              }
+
+              isRemoteUpdate.current = true;
+
+              if (data.action === "play") {
+                if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
+                  videoRef.current.currentTime = data.time;
+                }
+                videoRef.current.play().catch(console.error);
+              } else if (data.action === "pause") {
+                videoRef.current.currentTime = data.time;
+                videoRef.current.pause();
+              } else if (data.action === "seek") {
+                videoRef.current.currentTime = data.time;
+              }
+
+              setTimeout(() => {
+                isRemoteUpdate.current = false;
+              }, 500);
+            },
+          );
+
+          pusherChannel.current.bind(
+            "client-current-video-state",
+            (data: any) => {
+              console.log("[Pusher] Received current-video-state:", data);
+              if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
+                setActiveSourceId(data.sourceId);
+              }
+              if (data.groupName && data.groupName !== activeGroupNameRef.current) {
+                setActiveGroupName(data.groupName);
+              }
+              if (data.playUrl && data.playUrl !== currentPlayUrlRef.current) {
+                setCurrentPlayUrl(data.playUrl);
+                setLoading(false);
+                if (data.episodeIndex !== undefined) {
+                  setActiveEpisode(data.episodeIndex);
+                }
+              }
+              if (data.id && id !== data.id.toString()) {
+                navigate(`/video/${data.sourceId}/${data.id}?party=${effectPartyId}`);
+              } else if (data.aggregatedSources && aggregatedSourcesRef.current.length === 0) {
+                setAggregatedSources(data.aggregatedSources);
+              }
+            },
+          );
+
+            pusherChannel.current.bind("pusher:subscription_succeeded", () => {
+              setRoomSize((prev: number) => prev + 1);
+              hasRequestedStateRef.current = true;
+              setTimeout(() => {
+                try {
+                  pusherChannel.current.trigger("client-request-video-state", {});
+                } catch (err) {
+                  console.error("[Pusher] Request state error:", err);
+                }
+              }, 1000);
+          });
+
+          return;
+        }
+      }
+
+      // === Socket.IO fallback (Pusher not available) ===
+      socketRef = io();
+      setSocket(socketRef);
+      socketRef.emit("join-room", effectPartyId);
+      socketRef.on("room-size", (size: number) => {
         setRoomSize(size);
       });
-
-      newSocket.on("current-video-state", (data: any) => {
-        if (data.sourceId && data.sourceId !== activeSourceId) {
+      socketRef.on("current-video-state", (data: any) => {
+        if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
           setActiveSourceId(data.sourceId);
         }
-        if (data.groupName && data.groupName !== activeGroupName) {
+        if (data.groupName && data.groupName !== activeGroupNameRef.current) {
           setActiveGroupName(data.groupName);
         }
-        if (data.playUrl && data.playUrl !== currentPlayUrl) {
+        if (data.playUrl && data.playUrl !== currentPlayUrlRef.current) {
           setCurrentPlayUrl(data.playUrl);
           setActiveEpisode(data.episodeIndex || 0);
         }
@@ -130,18 +261,16 @@ export const Player: React.FC = () => {
           navigate(`/video/${data.sourceId}/${data.id}${searchParams.toString()}`);
         }
       });
-
-      newSocket.on("video-action", (data) => {
+      socketRef.on("video-action", (data) => {
         if (!videoRef.current) return;
 
-        // Sync source/episode if changed remotely
-        if (data.sourceId && data.sourceId !== activeSourceId) {
+        if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
           setActiveSourceId(data.sourceId);
         }
-        if (data.groupName && data.groupName !== activeGroupName) {
+        if (data.groupName && data.groupName !== activeGroupNameRef.current) {
           setActiveGroupName(data.groupName);
         }
-        if (data.playUrl && data.playUrl !== currentPlayUrl) {
+        if (data.playUrl && data.playUrl !== currentPlayUrlRef.current) {
           setCurrentPlayUrl(data.playUrl);
           setActiveEpisode(data.episodeIndex);
         }
@@ -164,95 +293,20 @@ export const Player: React.FC = () => {
           isRemoteUpdate.current = false;
         }, 500);
       });
-
-      // Initialize Pusher client
-      initPusherClient().then(async (client) => {
-        pusherClientRef.current = client;
-        
-        if (client) {
-          const pusherEnabled = await isPusherEnabled();
-          if (pusherEnabled) {
-            console.log("[Pusher] Connecting to private-party-" + partyId);
-            pusherChannel.current = client.subscribe(
-              `private-party-${partyId}`,
-            );
-
-            
-
-            pusherChannel.current.bind(
-              "client-request-video-state",
-              () => {
-                console.log("[Pusher] Received request-video-state, broadcasting current state");
-                const videoState = {
-                  id: id,
-                  sourceId: activeSourceId,
-                  playUrl: currentPlayUrl,
-                  groupName: activeGroupName,
-                  episodeIndex: activeEpisode,
-                };
-                try {
-                  pusherChannel.current.trigger("client-current-video-state", videoState);
-                } catch (err) {
-                  console.error("[Pusher] Trigger current-video-state error:", err);
-                }
-              }
-            );
-
-            pusherChannel.current.bind(
-              "client-video-action",
-              (data: VideoAction) => {
-                console.log("[Pusher] Received video-action:", data);
-                if (!videoRef.current) return;
-
-                if (data.sourceId && data.sourceId !== activeSourceId) {
-                  setActiveSourceId(data.sourceId);
-                }
-                if (data.groupName && data.groupName !== activeGroupName) {
-                  setActiveGroupName(data.groupName);
-                }
-                if (data.playUrl && data.playUrl !== currentPlayUrl) {
-                  setCurrentPlayUrl(data.playUrl);
-                  if (data.episodeIndex !== undefined) {
-                    setActiveEpisode(data.episodeIndex);
-                  }
-                }
-
-                isRemoteUpdate.current = true;
-
-                if (data.action === "play") {
-                  if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
-                    videoRef.current.currentTime = data.time;
-                  }
-                  videoRef.current.play().catch(console.error);
-                } else if (data.action === "pause") {
-                  videoRef.current.currentTime = data.time;
-                  videoRef.current.pause();
-                } else if (data.action === "seek") {
-                  videoRef.current.currentTime = data.time;
-                }
-
-                setTimeout(() => {
-                  isRemoteUpdate.current = false;
-                }, 500);
-              },
-            );
-
-            pusherChannel.current.bind("pusher:subscription_succeeded", () => {
-              setRoomSize((prev: number) => prev + 1);
-            });
-          }
-        }
-      });
-
-      return () => {
-        newSocket.close();
-        if (pusherChannel.current) {
-          pusherChannel.current.unbind_all();
-          pusherClientRef.current?.unsubscribe(`private-party-${partyId}`);
-        }
+      cleanupSocketIo = () => {
+        socketRef?.close();
+        setSocket(null);
       };
-    }
-  }, [partyId, activeSourceId, activeGroupName, currentPlayUrl]);
+    });
+
+    return () => {
+      if (pusherChannel.current) {
+        pusherChannel.current.unbind_all();
+        pusherClientRef.current?.unsubscribe(`private-party-${partyId}`);
+      }
+      if (cleanupSocketIo) cleanupSocketIo();
+    };
+  }, [partyId]);
 
   const emitVideoAction = (action: string) => {
     if (!isRemoteUpdate.current && partyId && videoRef.current) {
@@ -304,13 +358,14 @@ const handleCreateParty = () => {
   };
 
   const broadcastVideoState = () => {
-    if (!partyId || !pusherChannel.current) return;
+    if (!partyId || !pusherChannel.current || hasRequestedStateRef.current) return;
     const videoState = {
       id: id,
       sourceId: activeSourceId,
       playUrl: currentPlayUrl,
       groupName: activeGroupName,
       episodeIndex: activeEpisode,
+      aggregatedSources: aggregatedSources,
     };
     console.log("[Pusher] Broadcasting video state:", videoState);
     try {
@@ -345,6 +400,7 @@ const handleCreateParty = () => {
       if (!id || !sourceId) return;
       setLoading(true);
       try {
+        await ensureSourcesLoaded();
         const primaryApiSource = getSources().find((s) => s.id === sourceId);
         if (!primaryApiSource) throw new Error("Source not found");
 
@@ -791,34 +847,39 @@ const handleCreateParty = () => {
                 {(reverseEpisodes
                   ? [...activeGroup.urls].reverse()
                   : activeGroup.urls
-                ).map((ep, index) => (
-                  <button
-                    key={index}
-                    onClick={() => {
-                      setCurrentPlayUrl(ep.url);
-                      setActiveEpisode(index);
-                      if (socket && partyId) {
-                        socket.emit("video-action", {
-                          roomId: partyId,
-                          action: "play",
-                          time: 0,
-                          sourceId: activeSourceId,
-                          groupName: activeGroupName,
-                          playUrl: ep.url,
-                          episodeIndex: index,
-                        });
-                      }
-                    }}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all text-left truncate ${
-                      activeEpisode === index && currentPlayUrl === ep.url
-                        ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                        : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
-                    }`}
-                    title={ep.name}
-                  >
-                    {ep.name}
-                  </button>
-                ))}
+                ).map((ep, displayIndex) => {
+                  const originalIndex = reverseEpisodes
+                    ? activeGroup.urls.length - 1 - displayIndex
+                    : displayIndex;
+                  return (
+                    <button
+                      key={originalIndex}
+                      onClick={() => {
+                        setCurrentPlayUrl(ep.url);
+                        setActiveEpisode(originalIndex);
+                        if (socket && partyId) {
+                          socket.emit("video-action", {
+                            roomId: partyId,
+                            action: "play",
+                            time: 0,
+                            sourceId: activeSourceId,
+                            groupName: activeGroupName,
+                            playUrl: ep.url,
+                            episodeIndex: originalIndex,
+                          });
+                        }
+                      }}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all text-left truncate ${
+                        activeEpisode === originalIndex && currentPlayUrl === ep.url
+                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                          : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
+                      }`}
+                      title={ep.name}
+                    >
+                      {ep.name}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

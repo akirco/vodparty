@@ -247,7 +247,7 @@ export const Home: React.FC = () => {
             Leave Party
           </button>
         </div>
-      ) : (
+      ) : isTauri() ? (
         <div className="flex items-center gap-2 justify-end">
           <input
             type="text"
@@ -266,7 +266,7 @@ export const Home: React.FC = () => {
             Join
           </button>
         </div>
-      )}
+      ) : null}
 
       {/* Categories */}
       <div className="relative group">

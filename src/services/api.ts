@@ -7,6 +7,7 @@ const DEFAULT_SOURCES: ApiSource[] = [];
 
 let sources: ApiSource[] = DEFAULT_SOURCES;
 let primarySourceId: string = "";
+let sourcesLoaded: Promise<void> | null = null;
 
 const loadSources = async () => {
   const stored = await storage.get<ApiSource[]>("apple_cms_sources");
@@ -20,8 +21,10 @@ const loadSources = async () => {
 };
 
 if (typeof window !== "undefined") {
-  loadSources();
+  sourcesLoaded = loadSources();
 }
+
+export const ensureSourcesLoaded = () => sourcesLoaded || Promise.resolve();
 
 export const getSources = () => sources;
 export const getPrimarySource = () =>

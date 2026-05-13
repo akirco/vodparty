@@ -3,6 +3,10 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import http from "http";
 import { Server as SocketIOServer } from "socket.io";
+import Pusher from "pusher";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 async function startServer() {
   const app = express();
@@ -60,6 +64,29 @@ async function startServer() {
       console.warn(`[Proxy] Failed to fetch from ${targetUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       res.status(500).json({ error: "Failed to fetch from target URL" });
     }
+  });
+
+  // Pusher private channel authentication
+  const pusherServer = new Pusher({
+    appId: process.env.PUSHER_APP_ID || "",
+    key: process.env.PUSHER_KEY || "",
+    secret: process.env.PUSHER_SECRET || "",
+    cluster: process.env.PUSHER_CLUSTER || "ap1",
+    useTLS: true,
+  });
+
+  app.use(express.urlencoded({ extended: false }));
+
+  app.post("/.netlify/functions/pusher-auth", (req, res) => {
+    const { socket_id, channel_name } = req.body;
+    if (!socket_id || !channel_name) {
+      return res.status(400).json({ error: "Missing socket_id or channel_name" });
+    }
+    if (!channel_name.startsWith("private-party-")) {
+      return res.status(403).json({ error: "Unauthorized channel" });
+    }
+    const auth = pusherServer.authorizeChannel(socket_id, channel_name);
+    res.json(auth);
   });
 
   // Vite middleware for development
