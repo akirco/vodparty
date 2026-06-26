@@ -1,10 +1,11 @@
-import express from "express";
-import { createServer as createViteServer } from "vite";
-import path from "path";
-import http from "http";
-import { Server as SocketIOServer } from "socket.io";
-import Pusher from "pusher";
-import dotenv from "dotenv";
+import dotenv from 'dotenv';
+import express from 'express';
+import http from 'http';
+import path from 'path';
+import Pusher from 'pusher';
+import { Server as SocketIOServer } from 'socket.io';
+import { createServer as createViteServer } from 'vite';
+import { validateProxyUrl } from './src/shared/validateProxy.ts';
 
 dotenv.config();
 
@@ -13,87 +14,110 @@ async function startServer() {
   const PORT = 3000;
   const server = http.createServer(app);
   const io = new SocketIOServer(server, {
-    cors: { origin: "*" }
+    cors: { origin: '*' },
   });
 
-  io.on("connection", (socket) => {
-    socket.on("join-room", (roomId) => {
+  io.on('connection', (socket) => {
+    socket.on('join-room', (roomId) => {
       socket.join(roomId);
-      socket.to(roomId).emit("user-joined", socket.id);
+      socket.to(roomId).emit('user-joined', socket.id);
       const room = io.sockets.adapter.rooms.get(roomId);
-      io.to(roomId).emit("room-size", room ? room.size : 0);
+      io.to(roomId).emit('room-size', room ? room.size : 0);
     });
 
-    socket.on("video-action", (data) => {
-      socket.to(data.roomId).emit("video-action", data);
+    socket.on('video-action', (data) => {
+      socket.to(data.roomId).emit('video-action', data);
     });
 
-    socket.on("disconnecting", () => {
-      socket.rooms.forEach(roomId => {
+    socket.on('disconnecting', () => {
+      socket.rooms.forEach((roomId) => {
         if (roomId !== socket.id) {
-          socket.to(roomId).emit("user-left", socket.id);
+          socket.to(roomId).emit('user-left', socket.id);
           const room = io.sockets.adapter.rooms.get(roomId);
-          io.to(roomId).emit("room-size", room ? room.size - 1 : 0);
+          io.to(roomId).emit('room-size', room ? room.size - 1 : 0);
         }
       });
     });
   });
 
   // API route to proxy requests to Apple CMS API
-  app.get("/api/proxy", async (req, res) => {
+  app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url as string;
     if (!targetUrl) {
-      return res.status(400).json({ error: "Missing url parameter" });
+      return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    const validation = validateProxyUrl(targetUrl);
+    if (!validation.valid) {
+      return res.status(403).json({ error: validation.error });
     }
 
     try {
       const response = await fetch(targetUrl, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          "Accept": "application/json, text/plain, */*",
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          Accept: 'application/json, text/plain, */*',
         },
+        signal: AbortSignal.timeout(10000),
       });
-      
+
       if (!response.ok) {
-        return res.status(response.status).json({ error: `Proxy failed with status ${response.status}` });
+        return res
+          .status(response.status)
+          .json({ error: `Proxy failed with status ${response.status}` });
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (
+        !contentType.includes('application/json') &&
+        !contentType.includes('text/plain')
+      ) {
+        return res
+          .status(403)
+          .json({ error: 'Only JSON responses are allowed' });
       }
 
       const data = await response.json();
       res.json(data);
     } catch (error) {
-      console.warn(`[Proxy] Failed to fetch from ${targetUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      res.status(500).json({ error: "Failed to fetch from target URL" });
+      console.warn(
+        `[Proxy] Failed to fetch from ${targetUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      res.status(500).json({ error: 'Failed to fetch from target URL' });
     }
   });
 
   // Pusher private channel authentication
   const pusherServer = new Pusher({
-    appId: process.env.PUSHER_APP_ID || "",
-    key: process.env.PUSHER_KEY || "",
-    secret: process.env.PUSHER_SECRET || "",
-    cluster: process.env.PUSHER_CLUSTER || "ap1",
+    appId: process.env.PUSHER_APP_ID || '',
+    key: process.env.PUSHER_KEY || '',
+    secret: process.env.PUSHER_SECRET || '',
+    cluster: process.env.PUSHER_CLUSTER || 'ap1',
     useTLS: true,
   });
 
   app.use(express.urlencoded({ extended: false }));
 
-  app.post("/.netlify/functions/pusher-auth", (req, res) => {
+  app.post('/.netlify/functions/pusher-auth', (req, res) => {
     const { socket_id, channel_name } = req.body;
     if (!socket_id || !channel_name) {
-      return res.status(400).json({ error: "Missing socket_id or channel_name" });
+      return res
+        .status(400)
+        .json({ error: 'Missing socket_id or channel_name' });
     }
-    if (!channel_name.startsWith("private-party-")) {
-      return res.status(403).json({ error: "Unauthorized channel" });
+    if (!channel_name.startsWith('private-party-')) {
+      return res.status(403).json({ error: 'Unauthorized channel' });
     }
     const auth = pusherServer.authorizeChannel(socket_id, channel_name);
     res.json(auth);
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: "spa",
+      appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
@@ -104,7 +128,7 @@ async function startServer() {
     });
   }
 
-  server.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

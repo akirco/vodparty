@@ -3,7 +3,7 @@ export interface ApiSource {
   name: string;
   url: string;
   type: string;
-  status?: "valid" | "invalid" | "testing";
+  status?: 'valid' | 'invalid' | 'testing';
 }
 
 export interface PlayUrl {

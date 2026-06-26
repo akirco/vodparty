@@ -1,10 +1,10 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { Layout } from "./components/Layout";
-import { History } from "./pages/History";
-import { Home } from "./pages/Home";
-import { Player } from "./pages/Player";
-import { Search } from "./pages/Search";
-import { Settings } from "./pages/Settings";
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { Layout } from './components/Layout';
+import { History } from './pages/History';
+import { Home } from './pages/Home';
+import { Player } from './pages/Player';
+import { Search } from './pages/Search';
+import { Settings } from './pages/Settings';
 
 export default function App() {
   return (

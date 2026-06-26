@@ -1,5 +1,5 @@
-import Hls from "hls.js";
-import React, { useEffect, useRef } from "react";
+import Hls from 'hls.js';
+import React, { useEffect, useRef } from 'react';
 
 interface HlsPlayerProps {
   src: string;
@@ -38,7 +38,7 @@ export const HlsPlayer: React.FC<HlsPlayerProps> = ({
         video.currentTime = initialTime;
       }
     };
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
 
     if (Hls.isSupported()) {
       hls = new Hls();
@@ -47,12 +47,12 @@ export const HlsPlayer: React.FC<HlsPlayerProps> = ({
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         // Autoplay is often blocked by browsers, so we leave it to user interaction
       });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = src;
     }
 
     return () => {
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       if (hls) {
         hls.destroy();
       }

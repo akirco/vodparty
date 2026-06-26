@@ -1,80 +1,77 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
 import {
   CheckCircle,
-  CheckCircle2,
   Eye,
   EyeOff,
   Loader2,
   Plus,
-  Save,
   Star,
   Trash2,
   Upload,
   X,
   XCircle,
-} from "lucide-react";
-import React, { useEffect, useState } from "react";
+} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import {
-  fetchCategories,
-  getPrimarySource,
-  getSources,
-  saveSources,
-} from "../services/api";
+  getProxySettings,
+  getPusherSettings,
+  saveProxySettings,
+  savePusherSettings,
+} from '../config/pusher';
+import { fetchCategories } from '../services/api';
 import {
   getHiddenCategories,
   saveHiddenCategories,
-} from "../services/preferences";
-import { ApiSource, Category } from "../types";
-import { isTauri } from "../utils";
-import { getPusherSettings, savePusherSettings, getProxySettings, saveProxySettings } from "../config/pusher";
+} from '../services/preferences';
+import { useSourceStore } from '../stores/useSourceStore';
+import { ApiSource, Category } from '../types';
+import { appendUrlParam, isTauri } from '../utils';
 
-const testSource = async (url: string): Promise<"valid" | "invalid"> => {
+const testSource = async (url: string): Promise<'valid' | 'invalid'> => {
   try {
-    const testUrl = url.includes("?") ? `${url}&ac=list` : `${url}?ac=list`;
+    const testUrl = appendUrlParam(url, 'ac=list');
     let data: any;
     if (isTauri()) {
-      const result = await invoke<string>("proxy_request", { url: testUrl });
+      const result = await invoke<string>('proxy_request', { url: testUrl });
       data = JSON.parse(result);
     } else {
       const proxyUrl = `/api/proxy?url=${encodeURIComponent(testUrl)}`;
       const res = await fetch(proxyUrl);
-      if (!res.ok) return "invalid";
+      if (!res.ok) return 'invalid';
       data = await res.json();
     }
     if (data.list || [0, 1, 200].includes(data.code)) {
-      return "valid";
+      return 'valid';
     }
-    return "invalid";
+    return 'invalid';
   } catch (e) {
-    console.error("testSource error:", e);
-    return "invalid";
+    console.error('testSource error:', e);
+    return 'invalid';
   }
 };
 
 export const Settings: React.FC = () => {
   const [sources, setSources] = useState<ApiSource[]>([]);
-  const [primaryId, setPrimaryId] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
+  const [primaryId, setPrimaryId] = useState('');
 
-  const [newUrl, setNewUrl] = useState("");
-  const [newType, setNewType] = useState("");
+  const [newUrl, setNewUrl] = useState('');
+  const [newType, setNewType] = useState('');
 
   const [showBatchImport, setShowBatchImport] = useState(false);
-  const [batchInput, setBatchInput] = useState("");
+  const [batchInput, setBatchInput] = useState('');
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<number[]>([]);
 
-  const [pusherAppId, setPusherAppId] = useState("");
-  const [pusherKey, setPusherKey] = useState("");
-  const [pusherSecret, setPusherSecret] = useState("");
-  const [pusherCluster, setPusherCluster] = useState("ap1");
+  const [pusherAppId, setPusherAppId] = useState('');
+  const [pusherKey, setPusherKey] = useState('');
+  const [pusherSecret, setPusherSecret] = useState('');
+  const [pusherCluster, setPusherCluster] = useState('ap1');
 
-  const [httpProxy, setHttpProxy] = useState("");
-  const [httpsProxy, setHttpsProxy] = useState("");
+  const [httpProxy, setHttpProxy] = useState('');
+  const [httpsProxy, setHttpsProxy] = useState('');
 
-  const [selectedType, setSelectedType] = useState<string>("");
+  const [selectedType, setSelectedType] = useState<string>('');
 
   const allTypes = [...new Set(sources.map((s) => s.type).filter(Boolean))];
   const filteredSources = selectedType
@@ -82,13 +79,15 @@ export const Settings: React.FC = () => {
     : sources;
 
   useEffect(() => {
-    const primary = getPrimarySource();
+    const { sources: storeSources, primarySourceId: storePrimary } =
+      useSourceStore.getState();
+    const primary =
+      storeSources.find((s) => s.id === storePrimary) || storeSources[0];
     if (primary) {
       setPrimaryId(primary.id);
       getHiddenCategories(primary.id).then(setHiddenCategories);
     }
-    const initialSources = getSources();
-    setSources(initialSources);
+    setSources(storeSources);
 
     const loadCategories = async () => {
       try {
@@ -101,15 +100,15 @@ export const Settings: React.FC = () => {
     loadCategories();
 
     const testAllSources = async () => {
-      const allSources = getSources();
+      const state = useSourceStore.getState();
       const tested = await Promise.all(
-        allSources.map(async (s) => ({
+        state.sources.map(async (s) => ({
           ...s,
           status: s.url ? await testSource(s.url) : s.status,
         })),
       );
       setSources(tested);
-      saveSources(tested, primary?.id || "");
+      state.saveSources(tested, primary?.id || '');
     };
     testAllSources();
 
@@ -135,24 +134,22 @@ export const Settings: React.FC = () => {
       name: `${Date.now().toString().slice(-4)}${Math.random().toString(36).slice(2, 6)}`,
       url: newUrl,
       type: newType,
-      status: "testing",
+      status: 'testing',
     };
     const allSourcesWithNew = [...sources, newSource];
     setSources(allSourcesWithNew);
-    setNewUrl("");
-    setNewType("");
-    setHasChanges(true);
-
+    setNewUrl('');
+    setNewType('');
     const status = await testSource(newUrl);
     const updatedSources = allSourcesWithNew.map((s) =>
       s.id === newSource.id ? { ...s, status } : s,
     );
     setSources(updatedSources);
-    saveSources(updatedSources, primaryId);
+    useSourceStore.getState().saveSources(updatedSources, primaryId);
   };
 
   const handleBatchImport = async () => {
-    const lines = batchInput.split("\n").filter((line) => line.trim());
+    const lines = batchInput.split('\n').filter((line) => line.trim());
     const existingUrls = new Set(sources.map((s) => s.url));
     const newSources: ApiSource[] = lines
       .map((line, index) => ({
@@ -160,14 +157,13 @@ export const Settings: React.FC = () => {
         name: `${Date.now().toString().slice(-4)}${Math.random().toString(36).slice(2, 6)}`,
         url: line.trim(),
         type: newType,
-        status: "testing" as const,
+        status: 'testing' as const,
       }))
       .filter((s) => !existingUrls.has(s.url));
     setSources([...sources, ...newSources]);
-    setBatchInput("");
-    setNewType("");
+    setBatchInput('');
+    setNewType('');
     setShowBatchImport(false);
-    setHasChanges(true);
 
     const allSourcesWithNew = [...sources, ...newSources];
     for (const source of newSources) {
@@ -178,31 +174,16 @@ export const Settings: React.FC = () => {
       }
     }
     setSources(allSourcesWithNew);
-    saveSources(allSourcesWithNew, primaryId);
-  };
-
-  const handleSave = async () => {
-    try {
-      console.log("[Settings] Saving Pusher:", { pusherAppId, pusherKey, pusherSecret, pusherCluster });
-      await saveSources(sources, primaryId);
-      await saveHiddenCategories(primaryId, hiddenCategories);
-      await savePusherSettings(pusherAppId, pusherKey, pusherSecret, pusherCluster);
-      await saveProxySettings(httpProxy, httpsProxy);
-      setHasChanges(false);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (err) {
-      console.error("[Settings] Save error:", err);
-    }
+    useSourceStore.getState().saveSources(allSourcesWithNew, primaryId);
   };
 
   const handleRemoveSource = (id: string) => {
     const updated = sources.filter((s) => s.id !== id);
     setSources(updated);
-    setHasChanges(true);
-    if (primaryId === id && updated.length > 0) {
-      setPrimaryId(updated[0].id);
-    }
+    const newPrimaryId =
+      primaryId === id && updated.length > 0 ? updated[0].id : primaryId;
+    if (primaryId === id) setPrimaryId(newPrimaryId);
+    useSourceStore.getState().saveSources(updated, newPrimaryId);
   };
 
   const toggleCategoryVisibility = (categoryId: number) => {
@@ -210,7 +191,7 @@ export const Settings: React.FC = () => {
       const updated = prev.includes(categoryId)
         ? prev.filter((id) => id !== categoryId)
         : [...prev, categoryId];
-      setHasChanges(true);
+      saveHiddenCategories(primaryId, updated);
       return updated;
     });
   };
@@ -223,29 +204,7 @@ export const Settings: React.FC = () => {
           Manage your Apple CMS JSON API sources and preferences.
         </p>
       </div>
-      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6">
-        <div className="flex items-center gap-4 justify-end">
-          <button
-            onClick={handleSave}
-            disabled={!hasChanges}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-          >
-            <Save className="w-4 h-4" />
-            {hasChanges ? "Save Changes" : "Save Configuration"}
-          </button>
-          {saved && (
-            <span className="flex items-center gap-1 text-emerald-500 text-sm font-medium">
-              <CheckCircle2 className="w-4 h-4" />
-              Saved successfully
-            </span>
-          )}
-          {hasChanges && !saved && (
-            <span className="flex items-center gap-1 text-amber-500 text-sm font-medium">
-              Unsaved changes
-            </span>
-          )}
-        </div>
-      </div>
+
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-semibold text-white">API Sources</h3>
@@ -285,11 +244,11 @@ export const Settings: React.FC = () => {
 
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
           <button
-            onClick={() => setSelectedType("")}
+            onClick={() => setSelectedType('')}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-              selectedType === ""
-                ? "bg-indigo-600 text-white"
-                : "bg-zinc-800 text-zinc-400 hover:text-white"
+              selectedType === ''
+                ? 'bg-indigo-600 text-white'
+                : 'bg-zinc-800 text-zinc-400 hover:text-white'
             }`}
           >
             All ({sources.length})
@@ -300,8 +259,8 @@ export const Settings: React.FC = () => {
               onClick={() => setSelectedType(type)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
                 selectedType === type
-                  ? "bg-indigo-600 text-white"
-                  : "bg-zinc-800 text-zinc-400 hover:text-white"
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-zinc-800 text-zinc-400 hover:text-white'
               }`}
             >
               {type} ({sources.filter((s) => s.type === type).length})
@@ -313,7 +272,7 @@ export const Settings: React.FC = () => {
           {filteredSources.map((source) => (
             <div
               key={source.id}
-              className={`flex items-center justify-between p-4 rounded-lg border ${primaryId === source.id ? "border-indigo-500 bg-indigo-500/10" : "border-zinc-800/50 bg-zinc-950"}`}
+              className={`flex items-center justify-between p-4 rounded-lg border ${primaryId === source.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-zinc-800/50 bg-zinc-950'}`}
             >
               <div className="flex-1 min-w-0 pr-4">
                 <div className="flex items-center gap-2">
@@ -325,17 +284,17 @@ export const Settings: React.FC = () => {
                       Primary
                     </span>
                   )}
-                  {source.status === "valid" && (
+                  {source.status === 'valid' && (
                     <span className="flex items-center gap-1 text-emerald-500 text-xs">
                       <CheckCircle className="w-3.5 h-3.5" /> Valid
                     </span>
                   )}
-                  {source.status === "invalid" && (
+                  {source.status === 'invalid' && (
                     <span className="flex items-center gap-1 text-red-500 text-xs">
                       <XCircle className="w-3.5 h-3.5" /> Invalid
                     </span>
                   )}
-                  {source.status === "testing" && (
+                  {source.status === 'testing' && (
                     <span className="flex items-center gap-1 text-yellow-500 text-xs">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing
                     </span>
@@ -355,7 +314,8 @@ export const Settings: React.FC = () => {
                   <button
                     onClick={() => {
                       setPrimaryId(source.id);
-                      setHasChanges(true);
+                      useSourceStore.getState().saveSources(sources, source.id);
+                      getHiddenCategories(source.id).then(setHiddenCategories);
                     }}
                     className="p-2 text-zinc-400 hover:text-indigo-400 transition-colors"
                     title="Set as Primary"
@@ -394,8 +354,8 @@ export const Settings: React.FC = () => {
                   onClick={() => toggleCategoryVisibility(cat.type_id)}
                   className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
                     isHidden
-                      ? "border-zinc-800/50 bg-zinc-950/50 text-zinc-500"
-                      : "border-indigo-500/30 bg-indigo-500/10 text-indigo-100"
+                      ? 'border-zinc-800/50 bg-zinc-950/50 text-zinc-500'
+                      : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-100'
                   }`}
                 >
                   <span className="text-sm font-medium truncate pr-2">
@@ -429,8 +389,9 @@ export const Settings: React.FC = () => {
               placeholder="Enter Pusher App ID"
               value={pusherAppId}
               onChange={(e) => {
-                setPusherAppId(e.target.value);
-                setHasChanges(true);
+                const val = e.target.value;
+                setPusherAppId(val);
+                savePusherSettings(val, pusherKey, pusherSecret, pusherCluster);
               }}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
@@ -442,8 +403,14 @@ export const Settings: React.FC = () => {
               placeholder="Enter Pusher key"
               value={pusherKey}
               onChange={(e) => {
-                setPusherKey(e.target.value);
-                setHasChanges(true);
+                const val = e.target.value;
+                setPusherKey(val);
+                savePusherSettings(
+                  pusherAppId,
+                  val,
+                  pusherSecret,
+                  pusherCluster,
+                );
               }}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
@@ -455,8 +422,9 @@ export const Settings: React.FC = () => {
               placeholder="Enter Pusher secret"
               value={pusherSecret}
               onChange={(e) => {
-                setPusherSecret(e.target.value);
-                setHasChanges(true);
+                const val = e.target.value;
+                setPusherSecret(val);
+                savePusherSettings(pusherAppId, pusherKey, val, pusherCluster);
               }}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
@@ -468,8 +436,9 @@ export const Settings: React.FC = () => {
               placeholder="e.g. ap1"
               value={pusherCluster}
               onChange={(e) => {
-                setPusherCluster(e.target.value);
-                setHasChanges(true);
+                const val = e.target.value;
+                setPusherCluster(val);
+                savePusherSettings(pusherAppId, pusherKey, pusherSecret, val);
               }}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
@@ -478,36 +447,41 @@ export const Settings: React.FC = () => {
       </div>
 
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
-        <h3 className="text-xl font-semibold text-white">
-          Proxy Settings
-        </h3>
+        <h3 className="text-xl font-semibold text-white">Proxy Settings</h3>
         <p className="text-zinc-400 text-sm">
-          Configure proxy for network requests (used when shortcut launching doesn't inherit system proxy).
+          Configure proxy for network requests (used when shortcut launching
+          doesn't inherit system proxy).
         </p>
 
         <div className="grid gap-4">
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">HTTP Proxy</label>
+            <label className="text-zinc-500 text-sm block mb-2">
+              HTTP Proxy
+            </label>
             <input
               type="text"
               placeholder="http://127.0.0.1:7890"
               value={httpProxy}
               onChange={(e) => {
-                setHttpProxy(e.target.value);
-                setHasChanges(true);
+                const val = e.target.value;
+                setHttpProxy(val);
+                saveProxySettings(val, httpsProxy);
               }}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
           </div>
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">HTTPS Proxy</label>
+            <label className="text-zinc-500 text-sm block mb-2">
+              HTTPS Proxy
+            </label>
             <input
               type="text"
               placeholder="http://127.0.0.1:7890"
               value={httpsProxy}
               onChange={(e) => {
-                setHttpsProxy(e.target.value);
-                setHasChanges(true);
+                const val = e.target.value;
+                setHttpsProxy(val);
+                saveProxySettings(httpProxy, val);
               }}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />

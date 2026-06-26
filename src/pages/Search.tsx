@@ -1,17 +1,22 @@
+import { Loader2 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { fetchVideos, getPrimarySource } from '../services/api';
-import { Video } from '../types';
 import { VideoCard } from '../components/VideoCard';
-import { Loader2 } from 'lucide-react';
+import { fetchVideos } from '../services/api';
+import { useSourceStore } from '../stores/useSourceStore';
+import { Video } from '../types';
 
 export const Search: React.FC = () => {
   const [searchParams] = useSearchParams();
   const query = searchParams.get('q') || '';
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  const primarySourceId = getPrimarySource()?.id;
+
+  const primarySourceId = useSourceStore(
+    (s) =>
+      (s.sources.find((src) => src.id === s.primarySourceId) || s.sources[0])
+        ?.id,
+  );
 
   useEffect(() => {
     const loadSearch = async () => {
@@ -45,14 +50,16 @@ export const Search: React.FC = () => {
         </div>
       ) : videos.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-          {videos.map(video => (
-            <VideoCard key={video.vod_id} video={video} sourceId={primarySourceId} />
+          {videos.map((video) => (
+            <VideoCard
+              key={video.vod_id}
+              video={video}
+              sourceId={primarySourceId}
+            />
           ))}
         </div>
       ) : (
-        <div className="text-center py-20 text-zinc-500">
-          No results found.
-        </div>
+        <div className="text-center py-20 text-zinc-500">No results found.</div>
       )}
     </div>
   );

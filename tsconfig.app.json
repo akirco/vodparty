@@ -2,9 +2,7 @@
   "compilerOptions": {
     "target": "esnext",
     "module": "esnext",
-    "lib": [
-      "ES2022"
-    ],
+    "lib": ["ES2022"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "isolatedModules": true,
@@ -17,7 +15,5 @@
     "strict": true,
     "resolveJsonModule": true
   },
-  "include": [
-    "server.ts"
-  ]
+  "include": ["server.ts"]
 }

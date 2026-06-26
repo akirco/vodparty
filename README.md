@@ -134,6 +134,14 @@ CMD ["pnpm", "start"]
 
 - `GET /api/proxy?url=<target_url>` - 代理API请求
 
+
+## 特殊快捷键(其他遵循web播放器标准)
+
+- `f` 全屏播放
+- `ctrl+,` 上一集
+- `ctrl+.` 下一集
+- `ctrl+k` 搜索
+
 ## 许可证
 
 MIT

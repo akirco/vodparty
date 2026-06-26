@@ -6,17 +6,26 @@ import {
   Search,
   Settings,
   X,
-} from "lucide-react";
-import React, { useEffect, useRef, useState } from "react";
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+} from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useSourceStore } from '../stores/useSourceStore';
+import { SearchModal } from './SearchModal';
 
 export const Layout: React.FC = () => {
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+
+  const openSearchModal = useCallback(() => setSearchModalOpen(true), []);
+  const closeSearchModal = useCallback(() => setSearchModalOpen(false), []);
+
+  useEffect(() => {
+    useSourceStore.getState().loadSources();
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -24,23 +33,22 @@ export const Layout: React.FC = () => {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+K or Ctrl+K to focus search
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        searchInputRef.current?.focus();
+        setSearchModalOpen(true);
       }
     };
 
-    window.addEventListener("scroll", handleScroll);
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.removeEventListener("scroll", handleScroll);
-      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 
   const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSearch = (e: React.FormEvent) => {
@@ -68,7 +76,7 @@ export const Layout: React.FC = () => {
                 className="flex items-center gap-4 w-24"
                 data-tauri-drag-region="false"
               >
-                {location.pathname !== "/" && (
+                {location.pathname !== '/' && (
                   <button
                     onClick={() => navigate(-1)}
                     className="p-2 -ml-2 text-zinc-400 hover:text-white transition-colors rounded-full hover:bg-zinc-800"
@@ -82,27 +90,19 @@ export const Layout: React.FC = () => {
                 </a>
               </div>
 
-              {/* Desktop Search */}
+              {/* Desktop Search Trigger */}
               <div
-                className="hidden md:flex flex-1 max-w-md mx-8"
+                className="hidden md:flex flex-1 max-w-md mx-8 cursor-pointer"
                 data-tauri-drag-region="false"
+                onClick={openSearchModal}
               >
-                <form onSubmit={handleSearch} className="w-full relative group">
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    placeholder="Search movies, TV shows... (Cmd+K)"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800/50 rounded-full py-2 pl-4 pr-10 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-white select-text"
-                  />
-                  <button
-                    type="submit"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
-                  >
-                    <Search className="w-4 h-4" />
-                  </button>
-                </form>
+                <div className="w-full flex items-center gap-3 bg-zinc-900 border border-zinc-800/50 rounded-full py-2 pl-4 pr-3 text-sm text-zinc-500 hover:text-zinc-300 hover:border-zinc-700/60 transition-all group select-none">
+                  <Search className="w-4 h-4 shrink-0" />
+                  <span className="flex-1">Search movies, TV shows...</span>
+                  <kbd className="hidden lg:inline-flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800 rounded text-[10px] text-zinc-500 font-mono group-hover:text-zinc-400 transition-colors">
+                    <span className="text-[9px]">⌘</span>K
+                  </kbd>
+                </div>
               </div>
 
               <div
@@ -111,14 +111,14 @@ export const Layout: React.FC = () => {
               >
                 <Link
                   to="/history"
-                  className={`p-2 transition-colors rounded-full hover:bg-zinc-800 ${location.pathname === "/history" ? "text-indigo-400 bg-indigo-500/10" : "text-zinc-400 hover:text-white"}`}
+                  className={`p-2 transition-colors rounded-full hover:bg-zinc-800 ${location.pathname === '/history' ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-400 hover:text-white'}`}
                   title="Watch History"
                 >
                   <Clock className="w-5 h-5" />
                 </Link>
                 <Link
                   to="/settings"
-                  className={`p-2 transition-colors rounded-full hover:bg-zinc-800 ${location.pathname === "/settings" ? "text-indigo-400 bg-indigo-500/10" : "text-zinc-400 hover:text-white"}`}
+                  className={`p-2 transition-colors rounded-full hover:bg-zinc-800 ${location.pathname === '/settings' ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-400 hover:text-white'}`}
                   title="Settings"
                 >
                   <Settings className="w-5 h-5" />
@@ -164,13 +164,16 @@ export const Layout: React.FC = () => {
           <Outlet />
         </main>
 
+        {/* Search Modal */}
+        <SearchModal isOpen={searchModalOpen} onClose={closeSearchModal} />
+
         {/* Back to Top Button */}
         <button
           onClick={scrollToTop}
           className={`fixed bottom-8 right-8 z-50 p-3 rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-600 transition-all duration-300 ${
             showBackToTop
-              ? "opacity-100 translate-y-0"
-              : "opacity-0 translate-y-10 pointer-events-none"
+              ? 'opacity-100 translate-y-0'
+              : 'opacity-0 translate-y-10 pointer-events-none'
           }`}
           aria-label="Back to top"
         >

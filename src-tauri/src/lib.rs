@@ -6,6 +6,7 @@ use tauri_plugin_store::StoreExt;
 struct PusherState {
     pusher: Option<Pusher>,
     proxy_url: Option<String>,
+    client: Option<reqwest::Client>,
 }
 
 static PUSHER_STATE: std::sync::OnceLock<Mutex<PusherState>> = std::sync::OnceLock::new();
@@ -15,17 +16,24 @@ fn get_pusher_state() -> &'static Mutex<PusherState> {
         Mutex::new(PusherState {
             pusher: None,
             proxy_url: None,
+            client: None,
         })
     })
 }
 
-fn get_pusher_state_mut() -> &'static Mutex<PusherState> {
-    PUSHER_STATE.get_or_init(|| {
-        Mutex::new(PusherState {
-            pusher: None,
-            proxy_url: None,
-        })
-    })
+fn build_client(proxy_url: &Option<String>) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(ref proxy) = *proxy_url {
+        builder = builder.proxy(reqwest::Proxy::http(proxy).map_err(|e| e.to_string())?);
+    }
+    builder.build().map_err(|e| e.to_string())
+}
+
+fn get_store_string<R: tauri::Runtime>(store: &tauri_plugin_store::Store<R>, key: &str) -> String {
+    store
+        .get(key)
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default()
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -73,10 +81,10 @@ async fn save_pusher_settings(
 
         let pusher = Pusher::new(config).map_err(|e| e.to_string())?;
 
-        let mut state = get_pusher_state_mut().lock().map_err(|e| e.to_string())?;
+        let mut state = get_pusher_state().lock().map_err(|e| e.to_string())?;
         state.pusher = Some(pusher);
     } else {
-        let mut state = get_pusher_state_mut().lock().map_err(|e| e.to_string())?;
+        let mut state = get_pusher_state().lock().map_err(|e| e.to_string())?;
         state.pusher = None;
     }
 
@@ -89,32 +97,10 @@ async fn get_pusher_settings(app: tauri::AppHandle) -> Result<PusherSettings, St
         .store("synchive-store.json")
         .map_err(|e| e.to_string())?;
 
-    let mut id = String::new();
-    let mut key = String::new();
-    let mut secret = String::new();
-    let mut cluster = String::new();
-
-    if let Some(v) = store.get("pusher_id") {
-        if let Some(s) = v.as_str() {
-            id = s.to_string();
-        }
-    }
-    if let Some(v) = store.get("pusher_key") {
-        if let Some(s) = v.as_str() {
-            key = s.to_string();
-        }
-    }
-    if let Some(v) = store.get("pusher_secret") {
-        if let Some(s) = v.as_str() {
-            secret = s.to_string();
-        }
-    }
-    if let Some(v) = store.get("pusher_cluster") {
-        if let Some(s) = v.as_str() {
-            cluster = s.to_string();
-        }
-    }
-
+    let id = get_store_string(&store, "pusher_id");
+    let key = get_store_string(&store, "pusher_key");
+    let secret = get_store_string(&store, "pusher_secret");
+    let mut cluster = get_store_string(&store, "pusher_cluster");
     if cluster.is_empty() {
         cluster = "ap1".to_string();
     }
@@ -144,7 +130,7 @@ async fn save_proxy_settings(
     store.set("https_proxy", serde_json::Value::String(https.clone()));
     store.save().map_err(|e| e.to_string())?;
 
-    let mut state = get_pusher_state_mut().lock().map_err(|e| e.to_string())?;
+    let mut state = get_pusher_state().lock().map_err(|e| e.to_string())?;
     if !http.is_empty() {
         state.proxy_url = Some(http);
     } else if !https.is_empty() {
@@ -152,6 +138,7 @@ async fn save_proxy_settings(
     } else {
         state.proxy_url = None;
     }
+    state.client = build_client(&state.proxy_url).ok();
 
     Ok(())
 }
@@ -199,18 +186,19 @@ async fn pusher_auth(socket_id: String, channel_name: String) -> Result<String, 
 
 #[tauri::command]
 async fn proxy_request(url: String) -> Result<String, String> {
-    let proxy_url = {
+    let client = {
         let state = get_pusher_state().lock().map_err(|e| e.to_string())?;
-        state.proxy_url.clone()
+        match state.client {
+            Some(ref c) => c.clone(),
+            None => {
+                let client = build_client(&state.proxy_url)?;
+                drop(state);
+                let mut state = get_pusher_state().lock().map_err(|e| e.to_string())?;
+                state.client = Some(client.clone());
+                client
+            }
+        }
     };
-
-    let mut builder = reqwest::Client::builder();
-
-    if let Some(proxy) = proxy_url {
-        builder = builder.proxy(reqwest::Proxy::http(&proxy).map_err(|e| e.to_string())?);
-    }
-
-    let client = builder.build().map_err(|e| e.to_string())?;
 
     let res = client
         .get(&url)
@@ -235,45 +223,16 @@ pub fn run() {
             }
 
             if let Ok(store) = app.store("synchive-store.json") {
-                let mut id = String::new();
-                let mut key = String::new();
-                let mut secret = String::new();
-                let mut cluster = "ap1".to_string();
-
-                if let Some(v) = store.get("pusher_id") {
-                    if let Some(s) = v.as_str() {
-                        id = s.to_string();
-                    }
-                }
-                if let Some(v) = store.get("pusher_key") {
-                    if let Some(s) = v.as_str() {
-                        key = s.to_string();
-                    }
-                }
-                if let Some(v) = store.get("pusher_secret") {
-                    if let Some(s) = v.as_str() {
-                        secret = s.to_string();
-                    }
-                }
-                if let Some(v) = store.get("pusher_cluster") {
-                    if let Some(s) = v.as_str() {
-                        cluster = s.to_string();
-                    }
+                let id = get_store_string(&store, "pusher_id");
+                let key = get_store_string(&store, "pusher_key");
+                let secret = get_store_string(&store, "pusher_secret");
+                let mut cluster = get_store_string(&store, "pusher_cluster");
+                if cluster.is_empty() {
+                    cluster = "ap1".to_string();
                 }
 
-                let mut http_proxy = String::new();
-                let mut https_proxy = String::new();
-
-                if let Some(v) = store.get("http_proxy") {
-                    if let Some(s) = v.as_str() {
-                        http_proxy = s.to_string();
-                    }
-                }
-                if let Some(v) = store.get("https_proxy") {
-                    if let Some(s) = v.as_str() {
-                        https_proxy = s.to_string();
-                    }
-                }
+                let http_proxy = get_store_string(&store, "http_proxy");
+                let https_proxy = get_store_string(&store, "https_proxy");
 
                 if !id.is_empty() && !key.is_empty() && !secret.is_empty() {
                     let config = Config::builder()
@@ -286,13 +245,14 @@ pub fn run() {
 
                     if let Ok(config) = config {
                         if let Ok(pusher) = Pusher::new(config) {
-                            let mut state = get_pusher_state_mut().lock().unwrap();
+                            let mut state = get_pusher_state().lock().unwrap();
                             state.pusher = Some(pusher);
                             if !http_proxy.is_empty() {
                                 state.proxy_url = Some(http_proxy);
                             } else if !https_proxy.is_empty() {
                                 state.proxy_url = Some(https_proxy);
                             }
+                            state.client = build_client(&state.proxy_url).ok();
                         }
                     }
                 }

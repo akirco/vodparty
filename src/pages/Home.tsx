@@ -1,69 +1,78 @@
-import { ChevronLeft, ChevronRight, Loader2, UsersRound } from "lucide-react";
-import React, { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { io } from "socket.io-client";
-import { VideoCard } from "../components/VideoCard";
-import {
-  fetchCategories,
-  fetchVideos,
-  getPrimarySource,
-} from "../services/api";
-import { getHiddenCategories } from "../services/preferences";
-import { Category, Video } from "../types";
-import { isTauri } from "../utils";
+import { ChevronLeft, ChevronRight, Loader2, UsersRound } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { io } from 'socket.io-client';
+import { VideoCard } from '../components/VideoCard';
+import { fetchCategories, fetchVideos } from '../services/api';
+import { getHiddenCategories } from '../services/preferences';
+import { useHomeStore } from '../stores/useHomeStore';
+import { useSourceStore } from '../stores/useSourceStore';
+import { Category } from '../types';
+import { isTauri } from '../utils';
 
 export const Home: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const categoryParam = searchParams.get("category");
-  const partyParam = searchParams.get("party");
+  const categoryParam = searchParams.get('category');
+  const partyParam = searchParams.get('party');
   const activeCategory = categoryParam
     ? parseInt(categoryParam, 10)
     : undefined;
 
-  const [videos, setVideos] = useState<Video[]>([]);
+  const store = useHomeStore();
   const [categories, setCategories] = useState<Category[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<number[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-
-  const [prevCategory, setPrevCategory] = useState(activeCategory);
   const [socket, setSocket] = useState<any>(null);
-  const [joinPartyInput, setJoinPartyInput] = useState("");
+  const [joinPartyInput, setJoinPartyInput] = useState('');
   const [roomSize, setRoomSize] = useState(1);
 
-  if (activeCategory !== prevCategory) {
-    setPrevCategory(activeCategory);
-    setPage(1);
-    setVideos([]);
-  }
+  // Detect category change and reset store accordingly
+  const prevCategoryRef = useRef(activeCategory);
+  useEffect(() => {
+    if (prevCategoryRef.current !== activeCategory) {
+      prevCategoryRef.current = activeCategory;
+      store.reset();
+    }
+  }, [activeCategory]);
+
+  // Track scroll position continuously
+  useEffect(() => {
+    const handleScroll = () => store.setScrollPosition(window.scrollY);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Restore scroll position before first paint
+  useLayoutEffect(() => {
+    if (store.scrollPosition > 0) {
+      window.scrollTo(0, store.scrollPosition);
+    }
+  }, []);
 
   useEffect(() => {
     if (partyParam) {
       if (isTauri()) {
         (async () => {
-          const { initPusherClient, isPusherEnabled } =
-            await import("../config/pusher");
+          const { initPusherClient, isPusherEnabled } = await import(
+            '../config/pusher'
+          );
           const client = await initPusherClient();
           const enabled = await isPusherEnabled();
           if (enabled && client) {
             const channel = client.subscribe(`private-party-${partyParam}`);
-            channel.bind("client-current-video-state", (data: any) => {
-              console.log("[Home] Received current-video-state:", data);
+            channel.bind('client-current-video-state', (data: any) => {
               if (data.sourceId && data.id) {
                 navigate(
                   `/video/${data.sourceId}/${data.id}?party=${partyParam}`,
                 );
               }
             });
-            channel.bind("pusher:subscription_succeeded", () => {
-              console.log("[Home] Subscribed, requesting current state");
+            channel.bind('pusher:subscription_succeeded', () => {
               setTimeout(() => {
                 try {
-                  channel.trigger("client-request-video-state", {});
+                  channel.trigger('client-request-video-state', {});
                 } catch (e) {
-                  console.error("[Home] Request state error:", e);
+                  console.error('[Home] Request state error:', e);
                 }
               }, 1000);
             });
@@ -74,13 +83,13 @@ export const Home: React.FC = () => {
         const newSocket = io();
         setSocket(newSocket as any);
 
-        newSocket.emit("join-room", partyParam);
+        newSocket.emit('join-room', partyParam);
 
-        newSocket.on("room-size", (size: number) => {
+        newSocket.on('room-size', (size: number) => {
           setRoomSize(size);
         });
 
-        newSocket.on("current-video-state", (data: any) => {
+        newSocket.on('current-video-state', (data: any) => {
           if (data.sourceId && data.id) {
             navigate(`/video/${data.sourceId}/${data.id}?party=${partyParam}`);
           }
@@ -96,7 +105,7 @@ export const Home: React.FC = () => {
   const handleJoinParty = () => {
     if (joinPartyInput.trim()) {
       setSearchParams({ party: joinPartyInput.trim() });
-      setJoinPartyInput("");
+      setJoinPartyInput('');
     }
   };
 
@@ -117,7 +126,11 @@ export const Home: React.FC = () => {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
-  const primarySourceId = getPrimarySource()?.id;
+  const primarySourceId = useSourceStore(
+    (s) =>
+      (s.sources.find((src) => src.id === s.primarySourceId) || s.sources[0])
+        ?.id,
+  );
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -126,9 +139,7 @@ export const Home: React.FC = () => {
         if (res.class) {
           setCategories(res.class);
         }
-      } catch (error) {
-        // console.error("Failed to load categories", error);
-      }
+      } catch {}
     };
     loadCategories();
     if (primarySourceId) {
@@ -136,44 +147,58 @@ export const Home: React.FC = () => {
     }
   }, [primarySourceId]);
 
+  // Fetch page 1 on mount or category change
   useEffect(() => {
+    if (store.videos.length > 0) return;
     const loadVideos = async () => {
-      setLoading(true);
+      store.setLoading(true);
       try {
-        const res = await fetchVideos(page, activeCategory);
+        const res = await fetchVideos(1, activeCategory);
         if (res.list) {
-          if (page === 1) {
-            setVideos(res.list);
-          } else {
-            setVideos((prev) => [...prev, ...res.list]);
-          }
-          setHasMore(page < res.pagecount);
+          store.setVideos(res.list);
+          store.setPage(1);
+          store.setHasMore(1 < res.pagecount);
         }
-      } catch (error) {
-        // console.error("Failed to load videos", error);
+      } catch {
       } finally {
-        setLoading(false);
+        store.setLoading(false);
       }
     };
     loadVideos();
-  }, [page, activeCategory, primarySourceId]);
+  }, [activeCategory, primarySourceId]);
+
+  const handleLoadMore = async () => {
+    const nextPage = store.page + 1;
+    store.setLoading(true);
+    try {
+      const res = await fetchVideos(nextPage, activeCategory);
+      if (res.list) {
+        store.appendVideos(res.list);
+        store.setPage(nextPage);
+        store.setHasMore(nextPage < res.pagecount);
+      }
+    } catch {
+    } finally {
+      store.setLoading(false);
+    }
+  };
 
   const handleCategoryChange = (
     id?: number,
     event?: React.MouseEvent<HTMLButtonElement>,
   ) => {
     if (id === undefined) {
-      searchParams.delete("category");
+      searchParams.delete('category');
     } else {
-      searchParams.set("category", id.toString());
+      searchParams.set('category', id.toString());
     }
     setSearchParams(searchParams);
 
     if (event && event.currentTarget) {
       event.currentTarget.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "center",
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
       });
     }
   };
@@ -189,8 +214,8 @@ export const Home: React.FC = () => {
 
   useEffect(() => {
     checkScroll();
-    window.addEventListener("resize", checkScroll);
-    return () => window.removeEventListener("resize", checkScroll);
+    window.addEventListener('resize', checkScroll);
+    return () => window.removeEventListener('resize', checkScroll);
   }, [categories]);
 
   useEffect(() => {
@@ -202,37 +227,37 @@ export const Home: React.FC = () => {
         e.preventDefault();
         container.scrollBy({
           left: e.deltaY > 0 ? 300 : -300,
-          behavior: "smooth",
+          behavior: 'smooth',
         });
       }
     };
 
-    container.addEventListener("wheel", handleWheel, { passive: false });
-    return () => container.removeEventListener("wheel", handleWheel);
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
   }, []);
 
-  const scroll = (direction: "left" | "right") => {
+  const scroll = (direction: 'left' | 'right') => {
     if (scrollContainerRef.current) {
       const scrollAmount = scrollContainerRef.current.clientWidth * 0.8;
       scrollContainerRef.current.scrollBy({
-        left: direction === "left" ? -scrollAmount : scrollAmount,
-        behavior: "smooth",
+        left: direction === 'left' ? -scrollAmount : scrollAmount,
+        behavior: 'smooth',
       });
     }
   };
 
   return (
-    <div className="space-y-8">
+    <div>
       {/* Watch Party */}
       {partyParam && socket ? (
-        <div className="flex items-center justify-between bg-indigo-500/10 border border-indigo-500/30 px-4 py-3 rounded-lg">
+        <div className="flex items-center justify-between bg-indigo-500/10 border border-indigo-500/30 px-4 py-3 rounded-lg mb-8">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-indigo-400 text-sm font-medium">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
               </span>
-              {isTauri() ? `Party: ${partyParam}` : "Watch Party Active"}
+              {isTauri() ? `Party: ${partyParam}` : 'Watch Party Active'}
             </div>
             <div className="w-px h-4 bg-indigo-500/30"></div>
             <div className="flex items-center gap-1.5 text-zinc-300 text-sm">
@@ -248,14 +273,14 @@ export const Home: React.FC = () => {
           </button>
         </div>
       ) : isTauri() ? (
-        <div className="flex items-center gap-2 justify-end">
+        <div className="flex items-center gap-2 justify-end mb-8">
           <input
             type="text"
             placeholder="Enter party code"
             value={joinPartyInput}
             onChange={(e) => setJoinPartyInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleJoinParty()}
-            className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm w-40 focus:border-indigo-500 focus:outline-none"
+            onKeyDown={(e) => e.key === 'Enter' && handleJoinParty()}
+            className="bg-zinc-900 border border-zinc-700/50 rounded-lg px-3 py-2 text-white text-sm w-50 focus:border-indigo-500 focus:outline-none"
           />
           <button
             onClick={handleJoinParty}
@@ -268,12 +293,12 @@ export const Home: React.FC = () => {
         </div>
       ) : null}
 
-      {/* Categories */}
-      <div className="relative group">
+      {/* Categories (sticky below header) */}
+      <div className="sticky top-16 z-40 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800/50 -mx-2 sm:-mx-4 lg:-mx-6 px-2 sm:px-4 lg:px-6 py-2 mb-8">
         {canScrollLeft && (
           <div className="absolute left-0 top-0 bottom-2 w-16 bg-linear-to-r from-zinc-950 to-transparent z-10 flex items-center justify-start pointer-events-none">
             <button
-              onClick={() => scroll("left")}
+              onClick={() => scroll('left')}
               className="cursor-pointer p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg ml-1"
             >
               <ChevronLeft className="w-5 h-5" />
@@ -290,8 +315,8 @@ export const Home: React.FC = () => {
             onClick={(e) => handleCategoryChange(undefined, e)}
             className={`whitespace-nowrap cursor-pointer px-4 py-2 rounded-full text-sm font-medium transition-colors shrink-0 ${
               activeCategory === undefined
-                ? "bg-indigo-500 text-white"
-                : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                ? 'bg-indigo-500 text-white'
+                : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white'
             }`}
           >
             All
@@ -304,8 +329,8 @@ export const Home: React.FC = () => {
                 onClick={(e) => handleCategoryChange(cat.type_id, e)}
                 className={`whitespace-nowrap px-4 py-2 rounded-full cursor-pointer text-sm font-medium transition-colors shrink-0 ${
                   activeCategory === cat.type_id
-                    ? "bg-indigo-500 text-white"
-                    : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                    ? 'bg-indigo-500 text-white'
+                    : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white'
                 }`}
               >
                 {cat.type_name}
@@ -316,7 +341,7 @@ export const Home: React.FC = () => {
         {canScrollRight && (
           <div className="absolute right-0 top-0 bottom-2 w-16 bg-linear-to-l from-zinc-950 to-transparent z-10 flex items-center justify-end pointer-events-none">
             <button
-              onClick={() => scroll("right")}
+              onClick={() => scroll('right')}
               className="cursor-pointer p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg mr-1"
             >
               <ChevronRight className="w-5 h-5" />
@@ -326,32 +351,32 @@ export const Home: React.FC = () => {
       </div>
 
       {/* Video Grid */}
-      {videos.length > 0 ? (
+      {store.videos.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-          {videos.map((video) => (
+          {store.videos.map((video) => (
             <VideoCard
-              key={`${video.vod_id}-${page}`}
+              key={`${video.vod_id}-${store.page}`}
               video={video}
               sourceId={primarySourceId}
             />
           ))}
         </div>
-      ) : !loading ? (
+      ) : !store.loading ? (
         <div className="text-center py-20 text-zinc-500">
           No videos found. Please check your API settings.
         </div>
       ) : null}
 
       {/* Loading & Load More */}
-      {loading && (
+      {store.loading && (
         <div className="flex justify-center py-8">
           <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
         </div>
       )}
-      {!loading && hasMore && videos.length > 0 && (
+      {!store.loading && store.hasMore && store.videos.length > 0 && (
         <div className="flex justify-center py-8">
           <button
-            onClick={() => setPage((p) => p + 1)}
+            onClick={handleLoadMore}
             className="cursor-pointer px-6 py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-full font-medium transition-colors"
           >
             Load More

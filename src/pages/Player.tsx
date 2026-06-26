@@ -13,16 +13,21 @@ import {
   Server,
   Users,
   UsersRound,
-} from "lucide-react";
-import React, { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { io, Socket } from "socket.io-client";
-import { HlsPlayer } from "../components/HlsPlayer";
-import { initPusherClient, isPusherEnabled } from "../config/pusher";
-import { ensureSourcesLoaded, fetchVideoDetails, fetchVideos, getSources } from "../services/api";
-import { getHistory, saveHistoryItem } from "../services/history";
-import { isTauri } from "../utils";
-import { ApiSource, PlayUrl, Video } from "../types";
+} from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { io, Socket } from 'socket.io-client';
+import { HlsPlayer } from '../components/HlsPlayer';
+import { initPusherClient, isPusherEnabled } from '../config/pusher';
+import {
+  ensureSourcesLoaded,
+  fetchVideoDetails,
+  fetchVideos,
+} from '../services/api';
+import { getHistory, saveHistoryItem } from '../services/history';
+import { useSourceStore } from '../stores/useSourceStore';
+import { ApiSource, PlayUrl, Video } from '../types';
+import { isTauri, sanitizeHtml, useLatest } from '../utils';
 
 interface PlayGroup {
   groupName: string;
@@ -50,23 +55,23 @@ const parsePlayUrls = (
   playFromStr: string,
 ): PlayGroup[] => {
   if (!playUrlStr) return [];
-  const groups = playUrlStr.split("$$$");
-  const froms = (playFromStr || "").split("$$$");
+  const groups = playUrlStr.split('$$$');
+  const froms = (playFromStr || '').split('$$$');
 
   return groups
     .map((group, index) => {
       const groupName = froms[index] || `Source ${index + 1}`;
       const urls = group
-        .split("#")
+        .split('#')
         .filter(Boolean)
         .map((ep, epIndex) => {
-          const parts = ep.split("$");
+          const parts = ep.split('$');
           if (parts.length >= 2) {
             return { name: parts[0] || `Ep ${epIndex + 1}`, url: parts[1] };
           }
           return { name: `Ep ${epIndex + 1}`, url: ep };
         })
-        .filter((ep) => ep.url.toLowerCase().includes(".m3u8"));
+        .filter((ep) => ep.url.toLowerCase().includes('.m3u8'));
       return { groupName, urls };
     })
     .filter((g) => g.urls.length > 0);
@@ -76,16 +81,16 @@ export const Player: React.FC = () => {
   const { sourceId, id } = useParams<{ sourceId: string; id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const partyId = searchParams.get("party");
+  const partyId = searchParams.get('party');
 
   const [loading, setLoading] = useState(true);
   const [aggregatedSources, setAggregatedSources] = useState<
     AggregatedSource[]
   >([]);
 
-  const [activeSourceId, setActiveSourceId] = useState<string>("");
-  const [activeGroupName, setActiveGroupName] = useState<string>("");
-  const [currentPlayUrl, setCurrentPlayUrl] = useState<string>("");
+  const [activeSourceId, setActiveSourceId] = useState<string>('');
+  const [activeGroupName, setActiveGroupName] = useState<string>('');
+  const [currentPlayUrl, setCurrentPlayUrl] = useState<string>('');
   const [activeEpisode, setActiveEpisode] = useState<number>(0);
   const [initialTime, setInitialTime] = useState<number>(0);
   const [reverseEpisodes, setReverseEpisodes] = useState(false);
@@ -103,20 +108,14 @@ export const Player: React.FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pusherChannel = useRef<any>(null);
   const pusherClientRef = useRef<any>(null);
-  const activeSourceIdRef = useRef(activeSourceId);
-  const activeGroupNameRef = useRef(activeGroupName);
-  const currentPlayUrlRef = useRef(currentPlayUrl);
-  const activeEpisodeRef = useRef(activeEpisode);
+  const activeSourceIdRef = useLatest(activeSourceId);
+  const activeGroupNameRef = useLatest(activeGroupName);
+  const currentPlayUrlRef = useLatest(currentPlayUrl);
+  const activeEpisodeRef = useLatest(activeEpisode);
   const hasRequestedStateRef = useRef(false);
-  const currentPartyIdRef = useRef(partyId);
-  const aggregatedSourcesRef = useRef(aggregatedSources);
-
-  useEffect(() => { activeSourceIdRef.current = activeSourceId; }, [activeSourceId]);
-  useEffect(() => { activeGroupNameRef.current = activeGroupName; }, [activeGroupName]);
-  useEffect(() => { currentPlayUrlRef.current = currentPlayUrl; }, [currentPlayUrl]);
-  useEffect(() => { activeEpisodeRef.current = activeEpisode; }, [activeEpisode]);
-  useEffect(() => { currentPartyIdRef.current = partyId; }, [partyId]);
-  useEffect(() => { aggregatedSourcesRef.current = aggregatedSources; }, [aggregatedSources]);
+  const currentPartyIdRef = useLatest(partyId);
+  const aggregatedSourcesRef = useLatest(aggregatedSources);
+  const socketRef = useLatest(socket);
 
   useEffect(() => {
     if (!partyId) return;
@@ -134,41 +133,44 @@ export const Player: React.FC = () => {
       if (client) {
         const pusherEnabled = await isPusherEnabled();
         if (pusherEnabled) {
-          console.log("[Pusher] Connecting to private-party-" + effectPartyId);
           pusherChannel.current = client.subscribe(
             `private-party-${effectPartyId}`,
           );
 
-          pusherChannel.current.bind(
-            "client-request-video-state",
-            () => {
-              console.log("[Pusher] Received request-video-state, broadcasting current state");
-              const videoState = {
-                id: id,
-                sourceId: activeSourceIdRef.current,
-                playUrl: currentPlayUrlRef.current,
-                groupName: activeGroupNameRef.current,
-                episodeIndex: activeEpisodeRef.current,
-                aggregatedSources: aggregatedSourcesRef.current,
-              };
-              try {
-                pusherChannel.current.trigger("client-current-video-state", videoState);
-              } catch (err) {
-                console.error("[Pusher] Trigger current-video-state error:", err);
-              }
-            },
-          );
+          pusherChannel.current.bind('client-request-video-state', () => {
+            const videoState = {
+              id: id,
+              sourceId: activeSourceIdRef.current,
+              playUrl: currentPlayUrlRef.current,
+              groupName: activeGroupNameRef.current,
+              episodeIndex: activeEpisodeRef.current,
+              aggregatedSources: aggregatedSourcesRef.current,
+            };
+            try {
+              pusherChannel.current.trigger(
+                'client-current-video-state',
+                videoState,
+              );
+            } catch (err) {
+              console.error('[Pusher] Trigger current-video-state error:', err);
+            }
+          });
 
           pusherChannel.current.bind(
-            "client-video-action",
+            'client-video-action',
             (data: VideoAction) => {
-              console.log("[Pusher] Received video-action:", data);
               if (!videoRef.current) return;
 
-              if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
+              if (
+                data.sourceId &&
+                data.sourceId !== activeSourceIdRef.current
+              ) {
                 setActiveSourceId(data.sourceId);
               }
-              if (data.groupName && data.groupName !== activeGroupNameRef.current) {
+              if (
+                data.groupName &&
+                data.groupName !== activeGroupNameRef.current
+              ) {
                 setActiveGroupName(data.groupName);
               }
               if (data.playUrl && data.playUrl !== currentPlayUrlRef.current) {
@@ -180,15 +182,15 @@ export const Player: React.FC = () => {
 
               isRemoteUpdate.current = true;
 
-              if (data.action === "play") {
+              if (data.action === 'play') {
                 if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
                   videoRef.current.currentTime = data.time;
                 }
                 videoRef.current.play().catch(console.error);
-              } else if (data.action === "pause") {
+              } else if (data.action === 'pause') {
                 videoRef.current.currentTime = data.time;
                 videoRef.current.pause();
-              } else if (data.action === "seek") {
+              } else if (data.action === 'seek') {
                 videoRef.current.currentTime = data.time;
               }
 
@@ -199,13 +201,18 @@ export const Player: React.FC = () => {
           );
 
           pusherChannel.current.bind(
-            "client-current-video-state",
+            'client-current-video-state',
             (data: any) => {
-              console.log("[Pusher] Received current-video-state:", data);
-              if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
+              if (
+                data.sourceId &&
+                data.sourceId !== activeSourceIdRef.current
+              ) {
                 setActiveSourceId(data.sourceId);
               }
-              if (data.groupName && data.groupName !== activeGroupNameRef.current) {
+              if (
+                data.groupName &&
+                data.groupName !== activeGroupNameRef.current
+              ) {
                 setActiveGroupName(data.groupName);
               }
               if (data.playUrl && data.playUrl !== currentPlayUrlRef.current) {
@@ -216,23 +223,28 @@ export const Player: React.FC = () => {
                 }
               }
               if (data.id && id !== data.id.toString()) {
-                navigate(`/video/${data.sourceId}/${data.id}?party=${effectPartyId}`);
-              } else if (data.aggregatedSources && aggregatedSourcesRef.current.length === 0) {
+                navigate(
+                  `/video/${data.sourceId}/${data.id}?party=${effectPartyId}`,
+                );
+              } else if (
+                data.aggregatedSources &&
+                aggregatedSourcesRef.current.length === 0
+              ) {
                 setAggregatedSources(data.aggregatedSources);
               }
             },
           );
 
-            pusherChannel.current.bind("pusher:subscription_succeeded", () => {
-              setRoomSize((prev: number) => prev + 1);
-              hasRequestedStateRef.current = true;
-              setTimeout(() => {
-                try {
-                  pusherChannel.current.trigger("client-request-video-state", {});
-                } catch (err) {
-                  console.error("[Pusher] Request state error:", err);
-                }
-              }, 1000);
+          pusherChannel.current.bind('pusher:subscription_succeeded', () => {
+            setRoomSize((prev: number) => prev + 1);
+            hasRequestedStateRef.current = true;
+            setTimeout(() => {
+              try {
+                pusherChannel.current.trigger('client-request-video-state', {});
+              } catch (err) {
+                console.error('[Pusher] Request state error:', err);
+              }
+            }, 1000);
           });
 
           return;
@@ -242,11 +254,11 @@ export const Player: React.FC = () => {
       // === Socket.IO fallback (Pusher not available) ===
       socketRef = io();
       setSocket(socketRef);
-      socketRef.emit("join-room", effectPartyId);
-      socketRef.on("room-size", (size: number) => {
+      socketRef.emit('join-room', effectPartyId);
+      socketRef.on('room-size', (size: number) => {
         setRoomSize(size);
       });
-      socketRef.on("current-video-state", (data: any) => {
+      socketRef.on('current-video-state', (data: any) => {
         if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
           setActiveSourceId(data.sourceId);
         }
@@ -258,10 +270,12 @@ export const Player: React.FC = () => {
           setActiveEpisode(data.episodeIndex || 0);
         }
         if (data.id && id !== data.id.toString()) {
-          navigate(`/video/${data.sourceId}/${data.id}${searchParams.toString()}`);
+          navigate(
+            `/video/${data.sourceId}/${data.id}${searchParams.toString()}`,
+          );
         }
       });
-      socketRef.on("video-action", (data) => {
+      socketRef.on('video-action', (data) => {
         if (!videoRef.current) return;
 
         if (data.sourceId && data.sourceId !== activeSourceIdRef.current) {
@@ -277,15 +291,15 @@ export const Player: React.FC = () => {
 
         isRemoteUpdate.current = true;
 
-        if (data.action === "play") {
+        if (data.action === 'play') {
           if (Math.abs(videoRef.current.currentTime - data.time) > 2) {
             videoRef.current.currentTime = data.time;
           }
           videoRef.current.play().catch(console.error);
-        } else if (data.action === "pause") {
+        } else if (data.action === 'pause') {
           videoRef.current.currentTime = data.time;
           videoRef.current.pause();
-        } else if (data.action === "seek") {
+        } else if (data.action === 'seek') {
           videoRef.current.currentTime = data.time;
         }
 
@@ -321,7 +335,7 @@ export const Player: React.FC = () => {
 
       // Socket.IO for development
       if (socket) {
-        socket.emit("video-action", {
+        socket.emit('video-action', {
           roomId: partyId,
           ...videoActionData,
         });
@@ -329,36 +343,28 @@ export const Player: React.FC = () => {
 
       // Pusher for production
       isPusherEnabled().then((pusherEnabled) => {
-        console.log(
-          "[Pusher] emit - enabled:",
-          pusherEnabled,
-          "channel:",
-          !!pusherChannel.current,
-          "partyId:",
-          partyId,
-        );
         if (pusherEnabled && pusherChannel.current) {
           try {
-            console.log(
-              "[Pusher] Triggering client-video-action:",
+            pusherChannel.current.trigger(
+              'client-video-action',
               videoActionData,
             );
-            pusherChannel.current.trigger("client-video-action", videoActionData);
           } catch (err) {
-            console.error("[Pusher] Trigger error:", err);
+            console.error('[Pusher] Trigger error:', err);
           }
         }
       });
     }
   };
 
-const handleCreateParty = () => {
+  const handleCreateParty = () => {
     const newPartyId = Math.random().toString(36).substring(2, 9);
     setSearchParams({ party: newPartyId });
   };
 
   const broadcastVideoState = () => {
-    if (!partyId || !pusherChannel.current || hasRequestedStateRef.current) return;
+    if (!partyId || !pusherChannel.current || hasRequestedStateRef.current)
+      return;
     const videoState = {
       id: id,
       sourceId: activeSourceId,
@@ -367,17 +373,17 @@ const handleCreateParty = () => {
       episodeIndex: activeEpisode,
       aggregatedSources: aggregatedSources,
     };
-    console.log("[Pusher] Broadcasting video state:", videoState);
+    console.log('[Pusher] Broadcasting video state:', videoState);
     try {
-      pusherChannel.current.trigger("client-current-video-state", videoState);
+      pusherChannel.current.trigger('client-current-video-state', videoState);
     } catch (err) {
-      console.error("[Pusher] Broadcast error:", err);
+      console.error('[Pusher] Broadcast error:', err);
     }
   };
 
   const copyPartyLink = () => {
     if (isTauri()) {
-      navigator.clipboard.writeText(partyId || "");
+      navigator.clipboard.writeText(partyId || '');
     } else {
       navigator.clipboard.writeText(window.location.href);
     }
@@ -386,11 +392,7 @@ const handleCreateParty = () => {
   };
 
   const copyVideoLink = () => {
-    if (isTauri()) {
-      navigator.clipboard.writeText(currentPlayUrl);
-    } else {
-      navigator.clipboard.writeText(currentPlayUrl);
-    }
+    navigator.clipboard.writeText(currentPlayUrl);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
   };
@@ -401,8 +403,10 @@ const handleCreateParty = () => {
       setLoading(true);
       try {
         await ensureSourcesLoaded();
-        const primaryApiSource = getSources().find((s) => s.id === sourceId);
-        if (!primaryApiSource) throw new Error("Source not found");
+        const primaryApiSource = useSourceStore
+          .getState()
+          .sources.find((s) => s.id === sourceId);
+        if (!primaryApiSource) throw new Error('Source not found');
 
         const data = await fetchVideoDetails(parseInt(id, 10), sourceId);
         if (data) {
@@ -436,7 +440,9 @@ const handleCreateParty = () => {
             }
           }
 
-          const otherSources = getSources().filter((s) => s.id !== sourceId);
+          const otherSources = useSourceStore
+            .getState()
+            .sources.filter((s) => s.id !== sourceId);
           otherSources.forEach(async (otherSource) => {
             try {
               const searchRes = await fetchVideos(
@@ -476,7 +482,7 @@ const handleCreateParty = () => {
           });
         }
       } catch (error) {
-        console.error("Failed to load video details", error);
+        console.error('Failed to load video details', error);
       } finally {
         setLoading(false);
       }
@@ -495,29 +501,68 @@ const handleCreateParty = () => {
   }, [loading, partyId, currentPlayUrl]);
 
   useEffect(() => {
+    const switchEpisode = (direction: -1 | 1) => {
+      const aggSources = aggregatedSourcesRef.current;
+      const srcId = activeSourceIdRef.current;
+      const grpName = activeGroupNameRef.current;
+      const aggSource =
+        aggSources.find((s) => s.apiSource.id === srcId) || aggSources[0];
+      const group =
+        aggSource?.playGroups.find((g) => g.groupName === grpName) ||
+        aggSource?.playGroups[0];
+      if (!group) return;
+      const newIndex = activeEpisodeRef.current + direction;
+      if (newIndex < 0 || newIndex >= group.urls.length) return;
+
+      const ep = group.urls[newIndex];
+      setCurrentPlayUrl(ep.url);
+      setActiveEpisode(newIndex);
+      setInitialTime(0);
+
+      if (socketRef.current && partyId) {
+        socketRef.current.emit('video-action', {
+          roomId: partyId,
+          action: 'play',
+          time: 0,
+          sourceId: srcId,
+          groupName: grpName,
+          playUrl: ep.url,
+          episodeIndex: newIndex,
+        });
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isCssFullscreen) {
+      if (e.key === 'Escape' && isCssFullscreen) {
         setIsCssFullscreen(false);
       }
-      if (e.key === "f" || e.key === "F") {
+      if (e.key === 'f' || e.key === 'F') {
         if (
-          document.activeElement?.tagName !== "INPUT" &&
-          document.activeElement?.tagName !== "TEXTAREA"
+          document.activeElement?.tagName !== 'INPUT' &&
+          document.activeElement?.tagName !== 'TEXTAREA'
         ) {
           setIsCssFullscreen((prev: boolean) => !prev);
         }
       }
+      if (e.ctrlKey && (e.key === ',' || e.key === '<')) {
+        e.preventDefault();
+        switchEpisode(-1);
+      }
+      if (e.ctrlKey && (e.key === '.' || e.key === '>')) {
+        e.preventDefault();
+        switchEpisode(1);
+      }
     };
 
     if (isCssFullscreen) {
-      document.body.style.overflow = "hidden";
+      document.body.style.overflow = 'hidden';
     } else {
-      document.body.style.overflow = "";
+      document.body.style.overflow = '';
     }
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.body.style.overflow = "";
-      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isCssFullscreen]);
 
@@ -554,9 +599,9 @@ const handleCreateParty = () => {
       setActiveEpisode(nextIndex);
       setInitialTime(0);
       if (socket && partyId) {
-        socket.emit("video-action", {
+        socket.emit('video-action', {
           roomId: partyId,
-          action: "play",
+          action: 'play',
           time: 0,
           sourceId: activeSourceId,
           groupName: activeGroupName,
@@ -623,7 +668,7 @@ const handleCreateParty = () => {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
               </span>
-              {isTauri() ? `Party: ${partyId}` : "Watch Party Active"}
+              {isTauri() ? `Party: ${partyId}` : 'Watch Party Active'}
             </div>
             <div className="w-px h-4 bg-indigo-500/30 mx-1"></div>
             <div className="flex items-center gap-1.5 text-zinc-300 text-sm">
@@ -640,7 +685,7 @@ const handleCreateParty = () => {
               ) : (
                 <Copy className="w-4 h-4" />
               )}
-              {copied ? "Copied!" : isTauri() ? "Copy Code" : "Copy Link"}
+              {copied ? 'Copied!' : isTauri() ? 'Copy Code' : 'Copy Link'}
             </button>
           </div>
         ) : partyId ? (
@@ -659,254 +704,241 @@ const handleCreateParty = () => {
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Player Section */}
-        <div className="lg:col-span-2 space-y-4">
-          <div
-            className={`group ${
-              isCssFullscreen
-                ? "fixed inset-0 z-100 w-screen h-screen bg-black flex items-center justify-center"
-                : "relative aspect-video bg-black rounded-xl overflow-hidden shadow-xl"
-            }`}
-          >
-            {currentPlayUrl ? (
-              <HlsPlayer
-                src={currentPlayUrl}
-                poster={video.vod_pic}
-                initialTime={initialTime}
-                videoRef={videoRef}
-                onPlay={() => emitVideoAction("play")}
-                onPause={() => emitVideoAction("pause")}
-                onSeeked={() => emitVideoAction("seek")}
-                onTimeUpdate={handleTimeUpdate}
-                onEnded={handleEnded}
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-zinc-500">
-                No playable source found
-              </div>
-            )}
+      {/* Player (full width) */}
+      <div
+        className={`group ${
+          isCssFullscreen
+            ? 'fixed inset-0 z-100 w-screen h-screen bg-black flex items-center justify-center'
+            : 'relative aspect-video bg-black rounded-xl overflow-hidden shadow-xl'
+        }`}
+      >
+        {currentPlayUrl ? (
+          <HlsPlayer
+            src={currentPlayUrl}
+            poster={video.vod_pic}
+            initialTime={initialTime}
+            videoRef={videoRef}
+            onPlay={() => emitVideoAction('play')}
+            onPause={() => emitVideoAction('pause')}
+            onSeeked={() => emitVideoAction('seek')}
+            onTimeUpdate={handleTimeUpdate}
+            onEnded={handleEnded}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-zinc-500">
+            No playable source found
+          </div>
+        )}
 
-            {/* CSS Fullscreen Toggle Button */}
+        <button
+          onClick={() => setIsCssFullscreen(!isCssFullscreen)}
+          className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm transition-all z-50 opacity-100 md:opacity-0 md:group-hover:opacity-100"
+          title={isCssFullscreen ? 'Exit Page Fullscreen' : 'Page Fullscreen'}
+        >
+          {isCssFullscreen ? (
+            <Minimize className="w-5 h-5" />
+          ) : (
+            <Maximize className="w-5 h-5" />
+          )}
+        </button>
+      </div>
+
+      <div>
+        <h1 className="text-3xl font-bold text-white">{video.vod_name}</h1>
+        <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-zinc-400">
+          <span className="flex items-center gap-1">
+            <Calendar className="w-4 h-4" /> {video.vod_year || 'Unknown'}
+          </span>
+          <span className="flex items-center gap-1">
+            <MapPin className="w-4 h-4" /> {video.vod_area || 'Unknown'}
+          </span>
+          <span className="flex items-center gap-1">
+            <Film className="w-4 h-4" /> {video.type_name}
+          </span>
+          {video.vod_remarks && (
+            <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs font-medium">
+              {video.vod_remarks}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* API Sources Selector */}
+      {aggregatedSources.length > 1 && (
+        <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
+          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider">
+            <Server className="w-4 h-4" />
+            API Sources
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {aggregatedSources.map((src) => (
+              <button
+                key={src.apiSource.id}
+                onClick={() => {
+                  setActiveSourceId(src.apiSource.id);
+                  const firstGroup = src.playGroups[0];
+                  if (firstGroup) {
+                    setActiveGroupName(firstGroup.groupName);
+                    if (firstGroup.urls.length > 0) {
+                      setCurrentPlayUrl(firstGroup.urls[0].url);
+                      setActiveEpisode(0);
+                      if (socket && partyId) {
+                        socket.emit('video-action', {
+                          roomId: partyId,
+                          action: 'play',
+                          time: 0,
+                          sourceId: src.apiSource.id,
+                          groupName: firstGroup.groupName,
+                          playUrl: firstGroup.urls[0].url,
+                          episodeIndex: 0,
+                        });
+                      }
+                    }
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  activeSourceId === src.apiSource.id
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
+                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
+                }`}
+              >
+                {src.apiSource.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Play Groups (Lines) Selector */}
+      {activeAggSource && activeAggSource.playGroups.length > 1 && (
+        <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
+          <h3 className="text-sm font-semibold mb-3 text-zinc-400 uppercase tracking-wider">
+            Play Lines
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {activeAggSource.playGroups.map((group) => (
+              <button
+                key={group.groupName}
+                onClick={() => {
+                  setActiveGroupName(group.groupName);
+                  if (group.urls.length > 0) {
+                    setCurrentPlayUrl(group.urls[0].url);
+                    setActiveEpisode(0);
+                    if (socket && partyId) {
+                      socket.emit('video-action', {
+                        roomId: partyId,
+                        action: 'play',
+                        time: 0,
+                        sourceId: activeSourceId,
+                        groupName: group.groupName,
+                        playUrl: group.urls[0].url,
+                        episodeIndex: 0,
+                      });
+                    }
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  activeGroupName === group.groupName
+                    ? 'bg-zinc-200 text-zinc-900'
+                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
+                }`}
+              >
+                {group.groupName}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Episodes List */}
+      {activeGroup && activeGroup.urls.length > 0 && (
+        <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-white">
+              <PlayCircle className="w-5 h-5 text-indigo-500" />
+              Episodes ({activeGroup.urls.length})
+            </h3>
             <button
-              onClick={() => setIsCssFullscreen(!isCssFullscreen)}
-              className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm transition-all z-50 opacity-100 md:opacity-0 md:group-hover:opacity-100"
-              title={
-                isCssFullscreen ? "Exit Page Fullscreen" : "Page Fullscreen"
-              }
+              onClick={() => setReverseEpisodes(!reverseEpisodes)}
+              className={`p-2 rounded-lg text-sm font-medium transition-colors ${
+                reverseEpisodes
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
+              }`}
+              title={reverseEpisodes ? 'Normal order' : 'Reverse order'}
             >
-              {isCssFullscreen ? (
-                <Minimize className="w-5 h-5" />
-              ) : (
-                <Maximize className="w-5 h-5" />
-              )}
+              <ArrowDownUp className="w-4 h-4" />
             </button>
           </div>
-
-          <div>
-            <h1 className="text-3xl font-bold text-white">{video.vod_name}</h1>
-            <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-zinc-400">
-              <span className="flex items-center gap-1">
-                <Calendar className="w-4 h-4" /> {video.vod_year || "Unknown"}
-              </span>
-              <span className="flex items-center gap-1">
-                <MapPin className="w-4 h-4" /> {video.vod_area || "Unknown"}
-              </span>
-              <span className="flex items-center gap-1">
-                <Film className="w-4 h-4" /> {video.type_name}
-              </span>
-              {video.vod_remarks && (
-                <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs font-medium">
-                  {video.vod_remarks}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
-            <h3 className="text-lg font-semibold mb-2 text-white">Synopsis</h3>
-            <div
-              className="text-zinc-300 text-sm leading-relaxed max-w-none [&>p]:mb-4"
-              dangerouslySetInnerHTML={{
-                __html: video.vod_content || "No synopsis available.",
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Sidebar */}
-        <div className="space-y-6">
-          {/* API Sources Selector */}
-          {aggregatedSources.length > 1 && (
-            <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-zinc-400 uppercase tracking-wider">
-                <Server className="w-4 h-4" />
-                API Sources
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {aggregatedSources.map((src) => (
-                  <button
-                    key={src.apiSource.id}
-                    onClick={() => {
-                      setActiveSourceId(src.apiSource.id);
-                      const firstGroup = src.playGroups[0];
-                      if (firstGroup) {
-                        setActiveGroupName(firstGroup.groupName);
-                        if (firstGroup.urls.length > 0) {
-                          setCurrentPlayUrl(firstGroup.urls[0].url);
-                          setActiveEpisode(0);
-                          if (socket && partyId) {
-                            socket.emit("video-action", {
-                              roomId: partyId,
-                              action: "play",
-                              time: 0,
-                              sourceId: src.apiSource.id,
-                              groupName: firstGroup.groupName,
-                              playUrl: firstGroup.urls[0].url,
-                              episodeIndex: 0,
-                            });
-                          }
-                        }
-                      }
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                      activeSourceId === src.apiSource.id
-                        ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                        : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
-                    }`}
-                  >
-                    {src.apiSource.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Play Groups (Lines) Selector */}
-          {activeAggSource && activeAggSource.playGroups.length > 1 && (
-            <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
-              <h3 className="text-sm font-semibold mb-3 text-zinc-400 uppercase tracking-wider">
-                Play Lines
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {activeAggSource.playGroups.map((group) => (
-                  <button
-                    key={group.groupName}
-                    onClick={() => {
-                      setActiveGroupName(group.groupName);
-                      if (group.urls.length > 0) {
-                        setCurrentPlayUrl(group.urls[0].url);
-                        setActiveEpisode(0);
-                        if (socket && partyId) {
-                          socket.emit("video-action", {
-                            roomId: partyId,
-                            action: "play",
-                            time: 0,
-                            sourceId: activeSourceId,
-                            groupName: group.groupName,
-                            playUrl: group.urls[0].url,
-                            episodeIndex: 0,
-                          });
-                        }
-                      }
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                      activeGroupName === group.groupName
-                        ? "bg-zinc-200 text-zinc-900"
-                        : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
-                    }`}
-                  >
-                    {group.groupName}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Episodes List */}
-          {activeGroup && activeGroup.urls.length > 0 && (
-            <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold flex items-center gap-2 text-white">
-                  <PlayCircle className="w-5 h-5 text-indigo-500" />
-                  Episodes ({activeGroup.urls.length})
-                </h3>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 max-h-100 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
+            {(reverseEpisodes
+              ? [...activeGroup.urls].reverse()
+              : activeGroup.urls
+            ).map((ep, displayIndex) => {
+              const originalIndex = reverseEpisodes
+                ? activeGroup.urls.length - 1 - displayIndex
+                : displayIndex;
+              return (
                 <button
-                  onClick={() => setReverseEpisodes(!reverseEpisodes)}
-                  className={`p-2 rounded-lg text-sm font-medium transition-colors ${
-                    reverseEpisodes
-                      ? "bg-indigo-600 text-white"
-                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+                  key={originalIndex}
+                  onClick={() => {
+                    setCurrentPlayUrl(ep.url);
+                    setActiveEpisode(originalIndex);
+                    if (socket && partyId) {
+                      socket.emit('video-action', {
+                        roomId: partyId,
+                        action: 'play',
+                        time: 0,
+                        sourceId: activeSourceId,
+                        groupName: activeGroupName,
+                        playUrl: ep.url,
+                        episodeIndex: originalIndex,
+                      });
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-all text-left truncate ${
+                    activeEpisode === originalIndex && currentPlayUrl === ep.url
+                      ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
+                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
                   }`}
-                  title={reverseEpisodes ? "Normal order" : "Reverse order"}
+                  title={ep.name}
                 >
-                  <ArrowDownUp className="w-4 h-4" />
+                  {ep.name}
                 </button>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2 max-h-100 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
-                {(reverseEpisodes
-                  ? [...activeGroup.urls].reverse()
-                  : activeGroup.urls
-                ).map((ep, displayIndex) => {
-                  const originalIndex = reverseEpisodes
-                    ? activeGroup.urls.length - 1 - displayIndex
-                    : displayIndex;
-                  return (
-                    <button
-                      key={originalIndex}
-                      onClick={() => {
-                        setCurrentPlayUrl(ep.url);
-                        setActiveEpisode(originalIndex);
-                        if (socket && partyId) {
-                          socket.emit("video-action", {
-                            roomId: partyId,
-                            action: "play",
-                            time: 0,
-                            sourceId: activeSourceId,
-                            groupName: activeGroupName,
-                            playUrl: ep.url,
-                            episodeIndex: originalIndex,
-                          });
-                        }
-                      }}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all text-left truncate ${
-                        activeEpisode === originalIndex && currentPlayUrl === ep.url
-                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                          : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
-                      }`}
-                      title={ep.name}
-                    >
-                      {ep.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Details */}
-          <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50 space-y-4">
-            <h3 className="text-lg font-semibold text-white">Details</h3>
-            {video.vod_director && (
-              <div>
-                <span className="text-zinc-500 text-sm block mb-1">
-                  Director
-                </span>
-                <span className="text-zinc-200 text-sm">
-                  {video.vod_director}
-                </span>
-              </div>
-            )}
-            {video.vod_actor && (
-              <div>
-                <span className="text-zinc-500 text-sm block mb-1">Cast</span>
-                <span className="text-zinc-200 text-sm leading-relaxed">
-                  {video.vod_actor}
-                </span>
-              </div>
-            )}
+              );
+            })}
           </div>
         </div>
+      )}
+
+      {/* Details */}
+      <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50 space-y-4">
+        <h3 className="text-lg font-semibold text-white">Details</h3>
+        {video.vod_director && (
+          <div>
+            <span className="text-zinc-500 text-sm block mb-1">Director</span>
+            <span className="text-zinc-200 text-sm">{video.vod_director}</span>
+          </div>
+        )}
+        {video.vod_actor && (
+          <div>
+            <span className="text-zinc-500 text-sm block mb-1">Cast</span>
+            <span className="text-zinc-200 text-sm leading-relaxed">
+              {video.vod_actor}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Synopsis */}
+      <div className="bg-zinc-900/50 rounded-xl p-6 border border-zinc-800/50">
+        <h3 className="text-lg font-semibold mb-2 text-white">Synopsis</h3>
+        <div
+          className="text-zinc-300 text-sm leading-relaxed max-w-none [&>p]:mb-4"
+          dangerouslySetInnerHTML={{
+            __html: sanitizeHtml(video.vod_content || 'No synopsis available.'),
+          }}
+        />
       </div>
     </div>
   );

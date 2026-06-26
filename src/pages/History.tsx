@@ -1,29 +1,21 @@
-import { Clock, ImageOff, PlayCircle, Trash2 } from "lucide-react";
-import React, { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Clock, ImageOff, PlayCircle, Trash2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   clearHistory,
   getHistory,
   HistoryItem,
   removeHistoryItem,
-} from "../services/history";
+} from '../services/history';
+import { useSpotlight } from '../utils';
 
 const HistoryCard: React.FC<{
   item: HistoryItem;
   onRemove: (e: React.MouseEvent, videoId: number) => void;
   formatTime: (seconds: number) => string;
 }> = ({ item, onRemove, formatTime }) => {
-  const cardRef = useRef<HTMLAnchorElement>(null);
+  const { ref: cardRef, handleMouseMove } = useSpotlight<HTMLAnchorElement>();
   const [imgError, setImgError] = useState(false);
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!cardRef.current) return;
-    const rect = cardRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    cardRef.current.style.setProperty("--mouse-x", `${x}px`);
-    cardRef.current.style.setProperty("--mouse-y", `${y}px`);
-  };
 
   const progress =
     item.duration > 0 ? (item.currentTime / item.duration) * 100 : 0;
@@ -40,7 +32,7 @@ const HistoryCard: React.FC<{
         className="pointer-events-none absolute -inset-px rounded-xl opacity-0 transition duration-300 group-hover:opacity-100 z-30"
         style={{
           background:
-            "radial-gradient(400px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(59, 198, 188, 0.15), transparent 40%)",
+            'radial-gradient(400px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(59, 198, 188, 0.15), transparent 40%)',
         }}
       />
 
@@ -51,6 +43,7 @@ const HistoryCard: React.FC<{
             alt={item.video.vod_name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             referrerPolicy="no-referrer"
+            loading="lazy"
             onError={() => setImgError(true)}
           />
         ) : (
@@ -97,10 +90,10 @@ const HistoryCard: React.FC<{
         </p>
         <p className="text-zinc-500 text-xs mt-3">
           {new Date(item.timestamp).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
           })}
         </p>
       </div>
@@ -118,7 +111,7 @@ export const History: React.FC = () => {
   const handleClear = async () => {
     if (
       window.confirm(
-        "Are you sure you want to clear your entire watch history?",
+        'Are you sure you want to clear your entire watch history?',
       )
     ) {
       await clearHistory();
@@ -135,13 +128,13 @@ export const History: React.FC = () => {
   };
 
   const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return "0:00";
+    if (!seconds || isNaN(seconds)) return '0:00';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
     if (h > 0)
-      return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-    return `${m}:${s.toString().padStart(2, "0")}`;
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
   return (

@@ -1,23 +1,15 @@
-import { ImageOff } from "lucide-react";
-import React, { useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { Video } from "../types";
+import { ImageOff } from 'lucide-react';
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Video } from '../types';
+import { useSpotlight } from '../utils';
 
 export const VideoCard: React.FC<{ video: Video; sourceId: string }> = ({
   video,
   sourceId,
 }) => {
-  const cardRef = useRef<HTMLAnchorElement>(null);
+  const { ref: cardRef, handleMouseMove } = useSpotlight<HTMLAnchorElement>();
   const [imgError, setImgError] = useState(false);
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!cardRef.current) return;
-    const rect = cardRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    cardRef.current.style.setProperty("--mouse-x", `${x}px`);
-    cardRef.current.style.setProperty("--mouse-y", `${y}px`);
-  };
 
   return (
     <Link
@@ -31,7 +23,7 @@ export const VideoCard: React.FC<{ video: Video; sourceId: string }> = ({
         className="pointer-events-none absolute -inset-px rounded-xl opacity-0 transition duration-300 group-hover:opacity-100 z-30"
         style={{
           background:
-            "radial-gradient(400px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(59, 198, 188, 0.15), transparent 40%)",
+            'radial-gradient(400px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(59, 198, 188, 0.15), transparent 40%)',
         }}
       />
 
@@ -55,7 +47,7 @@ export const VideoCard: React.FC<{ video: Video; sourceId: string }> = ({
         )}
         <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
           <p className="text-white text-sm line-clamp-3 leading-relaxed">
-            {(video.vod_content || "").replace(/<[^>]+>/g, "")}
+            {(video.vod_content || '').replace(/<[^>]+>/g, '')}
           </p>
         </div>
         {video.vod_remarks && (
