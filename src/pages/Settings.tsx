@@ -23,7 +23,7 @@ import {
   getHiddenCategories,
   saveHiddenCategories,
 } from '../services/preferences';
-import { useSourceStore } from '../stores/useSourceStore';
+import { ensureSourcesLoaded, useSourceStore } from '../stores/useSourceStore';
 import { ApiSource, Category } from '../types';
 import { appendUrlParam, isTauri } from '../utils';
 
@@ -79,50 +79,67 @@ export const Settings: React.FC = () => {
     : sources;
 
   useEffect(() => {
-    const { sources: storeSources, primarySourceId: storePrimary } =
-      useSourceStore.getState();
-    const primary =
-      storeSources.find((s) => s.id === storePrimary) || storeSources[0];
-    if (primary) {
-      setPrimaryId(primary.id);
-      getHiddenCategories(primary.id).then(setHiddenCategories);
-    }
-    setSources(storeSources);
+    let cancelled = false;
 
-    const loadCategories = async () => {
-      try {
-        const res = await fetchCategories();
-        if (res.class) {
-          setCategories(res.class);
-        }
-      } catch (error) {}
+    const init = async () => {
+      // Wait for persisted sources to be loaded before reading the store,
+      // otherwise re-saving on mount wipes stored sources with an empty list.
+      await ensureSourcesLoaded();
+      if (cancelled) return;
+
+      const { sources: storeSources, primarySourceId: storePrimary } =
+        useSourceStore.getState();
+      const primary =
+        storeSources.find((s) => s.id === storePrimary) || storeSources[0];
+      if (primary) {
+        setPrimaryId(primary.id);
+        getHiddenCategories(primary.id).then(setHiddenCategories);
+      }
+      setSources(storeSources);
+
+      const loadCategories = async () => {
+        try {
+          const res = await fetchCategories();
+          if (res.class) {
+            setCategories(res.class);
+          }
+        } catch {}
+      };
+      loadCategories();
+
+      if (storeSources.length > 0) {
+        const state = useSourceStore.getState();
+        const tested = await Promise.all(
+          state.sources.map(async (s) => ({
+            ...s,
+            status: s.url ? await testSource(s.url) : s.status,
+          })),
+        );
+        if (cancelled) return;
+        setSources(tested);
+        state.saveSources(tested, primary?.id || '');
+      }
+
+      getPusherSettings().then((settings) => {
+        if (cancelled) return;
+        setPusherAppId(settings.app_id);
+        setPusherKey(settings.key);
+        setPusherSecret(settings.secret);
+        setPusherCluster(settings.cluster);
+      });
+
+      getProxySettings().then((settings) => {
+        if (cancelled) return;
+        setHttpProxy(settings.http_proxy);
+        setHttpsProxy(settings.https_proxy);
+      });
     };
-    loadCategories();
 
-    const testAllSources = async () => {
-      const state = useSourceStore.getState();
-      const tested = await Promise.all(
-        state.sources.map(async (s) => ({
-          ...s,
-          status: s.url ? await testSource(s.url) : s.status,
-        })),
-      );
-      setSources(tested);
-      state.saveSources(tested, primary?.id || '');
+    init();
+
+    return () => {
+      cancelled = true;
     };
-    testAllSources();
-
-    getPusherSettings().then((settings) => {
-      setPusherAppId(settings.app_id);
-      setPusherKey(settings.key);
-      setPusherSecret(settings.secret);
-      setPusherCluster(settings.cluster);
-    });
-
-    getProxySettings().then((settings) => {
-      setHttpProxy(settings.http_proxy);
-      setHttpsProxy(settings.https_proxy);
-    });
   }, []);
 
   const handleAddSource = async (e: React.FormEvent) => {

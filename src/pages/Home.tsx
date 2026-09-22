@@ -3,7 +3,11 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { VideoCard } from '../components/VideoCard';
-import { fetchCategories, fetchVideos } from '../services/api';
+import {
+  fetchCategories,
+  fetchEmptyCategoryIds,
+  fetchVideos,
+} from '../services/api';
 import { getHiddenCategories } from '../services/preferences';
 import { useHomeStore } from '../stores/useHomeStore';
 import { useSourceStore } from '../stores/useSourceStore';
@@ -25,6 +29,11 @@ export const Home: React.FC = () => {
   const [socket, setSocket] = useState<any>(null);
   const [joinPartyInput, setJoinPartyInput] = useState('');
   const [roomSize, setRoomSize] = useState(1);
+
+  // Categories that were verified to contain videos (probed on load).
+  const [hasVideosIds, setHasVideosIds] = useState<Set<number>>(new Set());
+  const [checkingCategories, setCheckingCategories] = useState(false);
+  const probedSourceRef = useRef<string | null>(null);
 
   // Detect category change and reset store accordingly
   const prevCategoryRef = useRef(activeCategory);
@@ -146,6 +155,34 @@ export const Home: React.FC = () => {
       getHiddenCategories(primarySourceId).then(setHiddenCategories);
     }
   }, [primarySourceId]);
+
+  // Probe categories and only show tabs whose lists are non-empty. Empty
+  // top-level categories (e.g. some Apple CMS parent categories) are hidden.
+  useEffect(() => {
+    if (categories.length === 0 || !primarySourceId) return;
+    if (probedSourceRef.current === primarySourceId) return;
+    probedSourceRef.current = primarySourceId;
+    let cancelled = false;
+    setHasVideosIds(new Set());
+    setCheckingCategories(true);
+    fetchEmptyCategoryIds(categories, primarySourceId, (typeId, hasVideos) => {
+      if (cancelled) return;
+      setHasVideosIds((prev) => {
+        if (prev.has(typeId) === hasVideos) return prev;
+        const next = new Set(prev);
+        if (hasVideos) next.add(typeId);
+        else next.delete(typeId);
+        return next;
+      });
+    })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setCheckingCategories(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [categories, primarySourceId]);
 
   // Fetch page 1 on mount or category change
   useEffect(() => {
@@ -322,7 +359,11 @@ export const Home: React.FC = () => {
             All
           </button>
           {categories
-            .filter((cat) => !hiddenCategories.includes(cat.type_id))
+            .filter(
+              (cat) =>
+                !hiddenCategories.includes(cat.type_id) &&
+                hasVideosIds.has(cat.type_id),
+            )
             .map((cat) => (
               <button
                 key={cat.type_id}
@@ -336,6 +377,14 @@ export const Home: React.FC = () => {
                 {cat.type_name}
               </button>
             ))}
+          {checkingCategories && (
+            <button
+              disabled
+              className="whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium text-zinc-500 bg-zinc-900 shrink-0 flex items-center gap-2"
+            >
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
+            </button>
+          )}
         </div>
 
         {canScrollRight && (

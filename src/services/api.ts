@@ -61,6 +61,33 @@ export function clearCache() {
 const getCategoriesCacheKey = (sourceId: string) =>
   `apple_cms_categories_${sourceId}`;
 
+const EMPTY_CATEGORIES_TTL = 24 * 60 * 60 * 1000;
+
+const getEmptyCategoriesCacheKey = (sourceId: string) =>
+  `apple_cms_categories_empty_${sourceId}`;
+
+const getCachedEmptyCategories = async (
+  sourceId: string,
+): Promise<number[] | null> => {
+  const cached = await storage.get<{ data: number[]; timestamp: number }>(
+    getEmptyCategoriesCacheKey(sourceId),
+  );
+  if (cached && Date.now() - cached.timestamp < EMPTY_CATEGORIES_TTL) {
+    return cached.data;
+  }
+  return null;
+};
+
+const setCachedEmptyCategories = async (
+  sourceId: string,
+  emptyIds: number[],
+) => {
+  await storage.set(getEmptyCategoriesCacheKey(sourceId), {
+    data: emptyIds,
+    timestamp: Date.now(),
+  });
+};
+
 const getCachedCategories = async (
   sourceId: string,
 ): Promise<Category[] | null> => {
@@ -144,6 +171,62 @@ export const fetchVideoDetails = async (
   const url = appendUrlParam(baseUrl, `ac=videolist&ids=${id}`);
   const data = await dedupedFetch<AppleCmsResponse>(url);
   return data.list && data.list.length > 0 ? data.list[0] : null;
+};
+
+/** Whether a category returns any videos (page 1, no pagination needed). */
+export const fetchCategoryHasVideos = async (
+  typeId: number,
+  sourceId?: string,
+): Promise<boolean> => {
+  const data = await fetchVideos(1, typeId, undefined, sourceId);
+  return (
+    (data.list?.length ?? 0) > 0 ||
+    (data.pagecount ?? 0) > 0 ||
+    (data.total ?? 0) > 0
+  );
+};
+
+/**
+ * Probe every category and report which ones have content. Probing is done
+ * with limited concurrency and the result is cached for 24h so the home page
+ * doesn't hammer the upstream on every visit. `onResult` is called for each
+ * category as its result resolves (used for progressive tab rendering).
+ */
+export const fetchEmptyCategoryIds = async (
+  categories: Category[],
+  sourceId: string,
+  onResult?: (typeId: number, hasVideos: boolean) => void,
+): Promise<number[]> => {
+  const cached = await getCachedEmptyCategories(sourceId);
+  if (cached) {
+    const emptySet = new Set(cached);
+    categories.forEach((cat) =>
+      onResult?.(cat.type_id, !emptySet.has(cat.type_id)),
+    );
+    return cached;
+  }
+
+  const emptyIds: number[] = [];
+  const concurrency = Math.min(4, Math.max(1, categories.length));
+  let index = 0;
+
+  const worker = async () => {
+    while (index < categories.length) {
+      const cat = categories[index++];
+      try {
+        const has = await fetchCategoryHasVideos(cat.type_id, sourceId);
+        if (!has) emptyIds.push(cat.type_id);
+        onResult?.(cat.type_id, has);
+      } catch {
+        // Unknown result — keep the tab visible rather than hiding it.
+        onResult?.(cat.type_id, true);
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  await setCachedEmptyCategories(sourceId, emptyIds);
+  return emptyIds;
 };
 
 export { ensureSourcesLoaded };

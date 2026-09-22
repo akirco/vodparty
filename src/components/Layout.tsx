@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useSourceStore } from '../stores/useSourceStore';
+import { ensureSourcesLoaded } from '../stores/useSourceStore';
 import { SearchModal } from './SearchModal';
 
 export const Layout: React.FC = () => {
@@ -24,7 +24,7 @@ export const Layout: React.FC = () => {
   const closeSearchModal = useCallback(() => setSearchModalOpen(false), []);
 
   useEffect(() => {
-    useSourceStore.getState().loadSources();
+    ensureSourcesLoaded();
   }, []);
 
   useEffect(() => {

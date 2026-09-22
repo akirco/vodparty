@@ -68,17 +68,21 @@ async function startServer() {
           .json({ error: `Proxy failed with status ${response.status}` });
       }
 
-      const contentType = response.headers.get('content-type') || '';
-      if (
-        !contentType.includes('application/json') &&
-        !contentType.includes('text/plain')
-      ) {
+      const responseBody = await response.text();
+
+      // Some Apple CMS/vod APIs serve valid JSON with a text/html
+      // content-type, so validate by parsing the body instead of only
+      // trusting the header.
+      let data: unknown;
+      try {
+        data = JSON.parse(responseBody);
+      } catch {
+        console.warn(`[Proxy] Non-JSON response from ${targetUrl}`);
         return res
           .status(403)
           .json({ error: 'Only JSON responses are allowed' });
       }
 
-      const data = await response.json();
       res.json(data);
     } catch (error) {
       console.warn(
