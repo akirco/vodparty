@@ -52,6 +52,11 @@ pnpm tauri build
 
 ```bash
 sudo pacman -S gtk
+sudo pacman -S gst-plugins-good gst-plugins-bad gst-libav
+
+sudo dpkg --ignore-depends=libwebkit2gtk-4.1-0,libgtk-3-0 -i ./src-tauri/target/release/bundle/deb/synchive_0.1.0_amd64.deb
+
+# or
 
 debtap -Q ./src-tauri/target/release/bundle/deb/synchive_0.1.0_amd64.deb
 
