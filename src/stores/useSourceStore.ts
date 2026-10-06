@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { storage } from '../services/storage';
-import { ApiSource } from '../types';
+import type { ApiSource } from '../types';
 
 interface SourceStore {
   sources: ApiSource[];

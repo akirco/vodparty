@@ -1,17 +1,22 @@
 import { ChevronLeft, ChevronRight, Loader2, UsersRound } from 'lucide-react';
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type React from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { VideoCard } from '../components/VideoCard';
+// Static import: the route is already code-split, so a dynamic import here
+// only triggered INEFFECTIVE_DYNAMIC_IMPORT without chunking anything.
+import { initPusherClient, isPusherEnabled } from '../config/pusher';
 import {
+  clearPersistedCategoryCaches,
   fetchCategories,
   fetchEmptyCategoryIds,
   fetchVideos,
 } from '../services/api';
 import { getHiddenCategories } from '../services/preferences';
-import { useHomeStore } from '../stores/useHomeStore';
+import { homeScrollPosition, useHomeStore } from '../stores/useHomeStore';
 import { useSourceStore } from '../stores/useSourceStore';
-import { Category } from '../types';
+import type { Category } from '../types';
 import { isTauri } from '../utils';
 
 export const Home: React.FC = () => {
@@ -23,38 +28,52 @@ export const Home: React.FC = () => {
     ? parseInt(categoryParam, 10)
     : undefined;
 
-  const store = useHomeStore();
+  // Subscribe per-field: `useHomeStore()` with no selector subscribes to the
+  // whole store, so any state change re-rendered every VideoCard in the grid.
+  const videos = useHomeStore((s) => s.videos);
+  const page = useHomeStore((s) => s.page);
+  const loading = useHomeStore((s) => s.loading);
+  const hasMore = useHomeStore((s) => s.hasMore);
   const [categories, setCategories] = useState<Category[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<number[]>([]);
   const [socket, setSocket] = useState<any>(null);
   const [joinPartyInput, setJoinPartyInput] = useState('');
   const [roomSize, setRoomSize] = useState(1);
 
-  // Categories that were verified to contain videos (probed on load).
-  const [hasVideosIds, setHasVideosIds] = useState<Set<number>>(new Set());
+  // Categories confirmed to be EMPTY are hidden. Starts empty and fills in
+  // progressively as probing resolves, so every category is visible (and
+  // clickable) immediately instead of the tab bar showing only "Checking…".
+  const [emptyCategoryIds, setEmptyCategoryIds] = useState<Set<number>>(
+    new Set(),
+  );
   const [checkingCategories, setCheckingCategories] = useState(false);
   const probedSourceRef = useRef<string | null>(null);
+  const probeNonceRef = useRef(0);
 
   // Detect category change and reset store accordingly
   const prevCategoryRef = useRef(activeCategory);
   useEffect(() => {
     if (prevCategoryRef.current !== activeCategory) {
       prevCategoryRef.current = activeCategory;
-      store.reset();
+      // A new category is a fresh list: don't restore the previous offset.
+      homeScrollPosition.current = 0;
+      useHomeStore.getState().reset();
     }
   }, [activeCategory]);
 
   // Track scroll position continuously
   useEffect(() => {
-    const handleScroll = () => store.setScrollPosition(window.scrollY);
+    const handleScroll = () => {
+      homeScrollPosition.current = window.scrollY;
+    };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   // Restore scroll position before first paint
   useLayoutEffect(() => {
-    if (store.scrollPosition > 0) {
-      window.scrollTo(0, store.scrollPosition);
+    if (homeScrollPosition.current > 0) {
+      window.scrollTo(0, homeScrollPosition.current);
     }
   }, []);
 
@@ -62,9 +81,6 @@ export const Home: React.FC = () => {
     if (partyParam) {
       if (isTauri()) {
         (async () => {
-          const { initPusherClient, isPusherEnabled } = await import(
-            '../config/pusher'
-          );
           const client = await initPusherClient();
           const enabled = await isPusherEnabled();
           if (enabled && client) {
@@ -156,22 +172,33 @@ export const Home: React.FC = () => {
     }
   }, [primarySourceId]);
 
-  // Probe categories and only show tabs whose lists are non-empty. Empty
-  // top-level categories (e.g. some Apple CMS parent categories) are hidden.
+  // Probe categories and hide the empty ones (some Apple CMS parents have no
+  // videos of their own). Results are cached 24h by the api layer.
   useEffect(() => {
     if (categories.length === 0 || !primarySourceId) return;
     if (probedSourceRef.current === primarySourceId) return;
     probedSourceRef.current = primarySourceId;
+    // Bumping the nonce orphans any in-flight manual re-probe.
+    probeNonceRef.current += 1;
     let cancelled = false;
-    setHasVideosIds(new Set());
+    setEmptyCategoryIds(new Set());
     setCheckingCategories(true);
+
     fetchEmptyCategoryIds(categories, primarySourceId, (typeId, hasVideos) => {
       if (cancelled) return;
-      setHasVideosIds((prev) => {
-        if (prev.has(typeId) === hasVideos) return prev;
+      setEmptyCategoryIds((prev) => {
+        // Unknown result (probe failed) keeps the tab visible.
+        if (hasVideos) {
+          if (!prev.has(typeId)) {
+            const next = new Set(prev);
+            next.delete(typeId);
+            return next;
+          }
+          return prev;
+        }
+        if (prev.has(typeId)) return prev;
         const next = new Set(prev);
-        if (hasVideos) next.add(typeId);
-        else next.delete(typeId);
+        next.add(typeId);
         return next;
       });
     })
@@ -179,44 +206,77 @@ export const Home: React.FC = () => {
       .finally(() => {
         if (!cancelled) setCheckingCategories(false);
       });
+
     return () => {
       cancelled = true;
     };
   }, [categories, primarySourceId]);
 
+  // Manual re-probe: drop the persisted 24h probe result and run again.
+  const handleRecheckCategories = async () => {
+    if (!primarySourceId || categories.length === 0) return;
+    const nonce = ++probeNonceRef.current;
+    setEmptyCategoryIds(new Set());
+    setCheckingCategories(true);
+    try {
+      await clearPersistedCategoryCaches();
+      const fresh = await fetchCategories(primarySourceId);
+      const list = fresh.class ?? categories;
+      setCategories(list);
+      await fetchEmptyCategoryIds(
+        list,
+        primarySourceId,
+        (typeId, hasVideos) => {
+          if (probeNonceRef.current !== nonce) return;
+          setEmptyCategoryIds((prev) => {
+            const next = new Set(prev);
+            if (hasVideos) next.delete(typeId);
+            else next.add(typeId);
+            return next;
+          });
+        },
+      );
+    } catch {
+    } finally {
+      if (probeNonceRef.current === nonce) setCheckingCategories(false);
+    }
+  };
+
   // Fetch page 1 on mount or category change
   useEffect(() => {
-    if (store.videos.length > 0) return;
+    if (videos.length > 0) return;
     const loadVideos = async () => {
-      store.setLoading(true);
+      useHomeStore.getState().setLoading(true);
       try {
         const res = await fetchVideos(1, activeCategory);
         if (res.list) {
-          store.setVideos(res.list);
-          store.setPage(1);
-          store.setHasMore(1 < res.pagecount);
+          const s = useHomeStore.getState();
+          s.setVideos(res.list);
+          s.setPage(1);
+          s.setHasMore(1 < res.pagecount);
         }
       } catch {
       } finally {
-        store.setLoading(false);
+        useHomeStore.getState().setLoading(false);
       }
     };
     loadVideos();
-  }, [activeCategory, primarySourceId]);
+  }, [activeCategory, primarySourceId, videos.length]);
 
   const handleLoadMore = async () => {
-    const nextPage = store.page + 1;
-    store.setLoading(true);
+    const nextPage = page + 1;
+    useHomeStore.getState().setLoading(true);
     try {
       const res = await fetchVideos(nextPage, activeCategory);
       if (res.list) {
-        store.appendVideos(res.list);
-        store.setPage(nextPage);
-        store.setHasMore(nextPage < res.pagecount);
+        const s = useHomeStore.getState();
+        s.appendVideos(res.list);
+        s.setPage(nextPage);
+        s.setHasMore(nextPage < res.pagecount);
       }
     } catch {
     } finally {
-      store.setLoading(false);
+      useHomeStore.getState().setLoading(false);
     }
   };
 
@@ -224,14 +284,17 @@ export const Home: React.FC = () => {
     id?: number,
     event?: React.MouseEvent<HTMLButtonElement>,
   ) => {
+    // Build a new params object instead of mutating the one `useSearchParams`
+    // handed back: mutating it in place mutates the router's current state.
+    const next = new URLSearchParams(searchParams);
     if (id === undefined) {
-      searchParams.delete('category');
+      next.delete('category');
     } else {
-      searchParams.set('category', id.toString());
+      next.set('category', id.toString());
     }
-    setSearchParams(searchParams);
+    setSearchParams(next);
 
-    if (event && event.currentTarget) {
+    if (event?.currentTarget) {
       event.currentTarget.scrollIntoView({
         behavior: 'smooth',
         block: 'nearest',
@@ -303,6 +366,7 @@ export const Home: React.FC = () => {
             </div>
           </div>
           <button
+            type="button"
             onClick={handleLeaveParty}
             className="text-zinc-400 hover:text-white text-sm"
           >
@@ -320,6 +384,7 @@ export const Home: React.FC = () => {
             className="bg-zinc-900 border border-zinc-700/50 rounded-lg px-3 py-2 text-white text-sm w-50 focus:border-indigo-500 focus:outline-none"
           />
           <button
+            type="button"
             onClick={handleJoinParty}
             disabled={!joinPartyInput.trim()}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
@@ -335,6 +400,7 @@ export const Home: React.FC = () => {
         {canScrollLeft && (
           <div className="absolute left-0 top-0 bottom-2 w-16 bg-linear-to-r from-zinc-950 to-transparent z-10 flex items-center justify-start pointer-events-none">
             <button
+              type="button"
               onClick={() => scroll('left')}
               className="cursor-pointer p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg ml-1"
             >
@@ -349,6 +415,7 @@ export const Home: React.FC = () => {
           className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide scroll-smooth relative px-1"
         >
           <button
+            type="button"
             onClick={(e) => handleCategoryChange(undefined, e)}
             className={`whitespace-nowrap cursor-pointer px-4 py-2 rounded-full text-sm font-medium transition-colors shrink-0 ${
               activeCategory === undefined
@@ -362,10 +429,11 @@ export const Home: React.FC = () => {
             .filter(
               (cat) =>
                 !hiddenCategories.includes(cat.type_id) &&
-                hasVideosIds.has(cat.type_id),
+                !emptyCategoryIds.has(cat.type_id),
             )
             .map((cat) => (
               <button
+                type="button"
                 key={cat.type_id}
                 onClick={(e) => handleCategoryChange(cat.type_id, e)}
                 className={`whitespace-nowrap px-4 py-2 rounded-full cursor-pointer text-sm font-medium transition-colors shrink-0 ${
@@ -377,12 +445,18 @@ export const Home: React.FC = () => {
                 {cat.type_name}
               </button>
             ))}
-          {checkingCategories && (
-            <button
-              disabled
-              className="whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium text-zinc-500 bg-zinc-900 shrink-0 flex items-center gap-2"
-            >
+          {checkingCategories ? (
+            <span className="whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium text-zinc-500 bg-zinc-900 shrink-0 flex items-center gap-2">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleRecheckCategories}
+              className="whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium text-zinc-500 bg-zinc-900 hover:bg-zinc-800 hover:text-zinc-300 shrink-0 transition-colors"
+              title="Re-check which categories have videos"
+            >
+              Re-check
             </button>
           )}
         </div>
@@ -390,6 +464,7 @@ export const Home: React.FC = () => {
         {canScrollRight && (
           <div className="absolute right-0 top-0 bottom-2 w-16 bg-linear-to-l from-zinc-950 to-transparent z-10 flex items-center justify-end pointer-events-none">
             <button
+              type="button"
               onClick={() => scroll('right')}
               className="cursor-pointer p-1.5 rounded-full bg-zinc-800/80 text-white hover:bg-zinc-700 backdrop-blur-sm pointer-events-auto shadow-lg mr-1"
             >
@@ -399,32 +474,42 @@ export const Home: React.FC = () => {
         )}
       </div>
 
-      {/* Video Grid */}
-      {store.videos.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-          {store.videos.map((video) => (
-            <VideoCard
-              key={`${video.vod_id}-${store.page}`}
-              video={video}
-              sourceId={primarySourceId}
-            />
-          ))}
+      {/* Video Grid. Long scroll pages are windowed via content-visibility so
+          hundreds of accumulated cards skip layout/paint work off-screen
+          without any JS measurement. */}
+      {videos.length > 0 ? (
+        <div
+          style={{
+            contentVisibility: 'auto',
+            containIntrinsicSize: 'auto 420px',
+          }}
+        >
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+            {videos.map((video) => (
+              <VideoCard
+                key={video.vod_id}
+                video={video}
+                sourceId={primarySourceId}
+              />
+            ))}
+          </div>
         </div>
-      ) : !store.loading ? (
+      ) : !loading ? (
         <div className="text-center py-20 text-zinc-500">
           No videos found. Please check your API settings.
         </div>
       ) : null}
 
       {/* Loading & Load More */}
-      {store.loading && (
+      {loading && (
         <div className="flex justify-center py-8">
           <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
         </div>
       )}
-      {!store.loading && store.hasMore && store.videos.length > 0 && (
+      {!loading && hasMore && videos.length > 0 && (
         <div className="flex justify-center py-8">
           <button
+            type="button"
             onClick={handleLoadMore}
             className="cursor-pointer px-6 py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-full font-medium transition-colors"
           >

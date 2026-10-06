@@ -1,17 +1,18 @@
 import { Clock, ImageOff, PlayCircle, Trash2 } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import type React from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   clearHistory,
   getHistory,
-  HistoryItem,
+  type HistoryItem,
   removeHistoryItem,
 } from '../services/history';
 import { useSpotlight } from '../utils';
 
 const HistoryCard: React.FC<{
   item: HistoryItem;
-  onRemove: (e: React.MouseEvent, videoId: number) => void;
+  onRemove: (e: React.MouseEvent, item: HistoryItem) => void;
   formatTime: (seconds: number) => string;
 }> = ({ item, onRemove, formatTime }) => {
   const { ref: cardRef, handleMouseMove } = useSpotlight<HTMLAnchorElement>();
@@ -39,8 +40,8 @@ const HistoryCard: React.FC<{
       <div className="aspect-video relative overflow-hidden rounded-lg bg-zinc-800 z-20 flex items-center justify-center">
         {!imgError ? (
           <img
-            src={item.video.vod_pic}
-            alt={item.video.vod_name}
+            src={item.videoPic}
+            alt={item.videoName}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             referrerPolicy="no-referrer"
             loading="lazy"
@@ -73,10 +74,11 @@ const HistoryCard: React.FC<{
       <div className="mt-3 px-1 z-20 relative">
         <div className="flex items-start justify-between gap-2">
           <h3 className="text-white font-medium line-clamp-1 flex-1 group-hover:text-indigo-400 transition-colors">
-            {item.video.vod_name}
+            {item.videoName}
           </h3>
           <button
-            onClick={(e) => onRemove(e, item.videoId)}
+            type="button"
+            onClick={(e) => onRemove(e, item)}
             className="text-zinc-500 hover:text-red-400 p-1 -mr-1 -mt-1 opacity-0 group-hover:opacity-100 transition-opacity relative z-40"
             title="Remove from history"
           >
@@ -119,16 +121,16 @@ export const History: React.FC = () => {
     }
   };
 
-  const handleRemove = async (e: React.MouseEvent, videoId: number) => {
+  const handleRemove = async (e: React.MouseEvent, item: HistoryItem) => {
     e.preventDefault();
     e.stopPropagation();
-    await removeHistoryItem(videoId);
+    await removeHistoryItem(item.videoId, item.sourceId);
     const updated = await getHistory();
     setHistory(updated);
   };
 
   const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return '0:00';
+    if (!seconds || Number.isNaN(seconds)) return '0:00';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
@@ -146,6 +148,7 @@ export const History: React.FC = () => {
         </div>
         {history.length > 0 && (
           <button
+            type="button"
             onClick={handleClear}
             className="flex items-center gap-2 text-zinc-400 hover:text-red-400 transition-colors text-sm font-medium"
           >
@@ -175,7 +178,7 @@ export const History: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {history.map((item) => (
             <HistoryCard
-              key={item.videoId}
+              key={`${item.sourceId}-${item.videoId}`}
               item={item}
               onRemove={handleRemove}
               formatTime={formatTime}

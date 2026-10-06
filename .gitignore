@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+PLAN.md
+
+# TypeScript incremental build info (see tsconfig.*.json project references)
+*.tsbuildinfo
+node_modules/.tmp/

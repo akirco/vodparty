@@ -1,10 +1,11 @@
 import { Loader2 } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import type React from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { VideoCard } from '../components/VideoCard';
 import { fetchVideos } from '../services/api';
 import { useSourceStore } from '../stores/useSourceStore';
-import { Video } from '../types';
+import type { Video } from '../types';
 
 export const Search: React.FC = () => {
   const [searchParams] = useSearchParams();

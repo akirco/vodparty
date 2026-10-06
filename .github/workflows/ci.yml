@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Typecheck, lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Pin to the version in package.json so CI matches local.
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # Renders HlsPlayer in a real browser. Typecheck/lint/build all pass on
+      # the lazy-load bug this guards, so it needs an actual engine.
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser smoke test
+        run: pnpm test:browser
+
+  desktop:
+    name: cargo check (Tauri)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri needs these system packages to build on Linux.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings

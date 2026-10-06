@@ -1,8 +1,10 @@
 import { ImageOff } from 'lucide-react';
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Video } from '../types';
+import type { Video } from '../types';
 import { useSpotlight } from '../utils';
+import { stripHtml } from '../utils/stripHtml';
 
 export const VideoCard: React.FC<{ video: Video; sourceId: string }> = ({
   video,
@@ -47,7 +49,7 @@ export const VideoCard: React.FC<{ video: Video; sourceId: string }> = ({
         )}
         <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
           <p className="text-white text-sm line-clamp-3 leading-relaxed">
-            {(video.vod_content || '').replace(/<[^>]+>/g, '')}
+            {stripHtml(video.vod_content)}
           </p>
         </div>
         {video.vod_remarks && (

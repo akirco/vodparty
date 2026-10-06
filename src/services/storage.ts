@@ -41,6 +41,14 @@ async function getTauriStore(key: string): Promise<StoreInstance> {
   return store;
 }
 
+const hasLocalStorage = () => {
+  try {
+    return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+  } catch {
+    return false;
+  }
+};
+
 export const storage = {
   async get<T>(key: string): Promise<T | null> {
     if (isTauri()) {
@@ -52,6 +60,7 @@ export const storage = {
         return null;
       }
     } else {
+      if (!hasLocalStorage()) return null;
       try {
         const stored = localStorage.getItem(key);
         return stored ? JSON.parse(stored) : null;
@@ -67,6 +76,7 @@ export const storage = {
       await store.set(key, value);
       await store.save();
     } else {
+      if (!hasLocalStorage()) return;
       localStorage.setItem(key, JSON.stringify(value));
     }
   },
@@ -77,6 +87,7 @@ export const storage = {
       await store.delete(key);
       await store.save();
     } else {
+      if (!hasLocalStorage()) return;
       localStorage.removeItem(key);
     }
   },

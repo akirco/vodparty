@@ -1,5 +1,6 @@
 import { ArrowRight, Search, X } from 'lucide-react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type React from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface SearchModalProps {

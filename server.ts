@@ -1,24 +1,61 @@
+import http from 'node:http';
+import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
-import http from 'http';
-import path from 'path';
 import Pusher from 'pusher';
 import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
-import { validateProxyUrl } from './src/shared/validateProxy.ts';
+import { fetchUpstreamJson } from './src/shared/fetchJson.ts';
 
 dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const server = http.createServer(app);
+  // Allow list for the realtime transport. Defaults to same-origin only,
+  // which covers the bundled SPA served by this process; set ALLOWED_ORIGINS
+  // (comma-separated) when the client is hosted elsewhere.
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
   const io = new SocketIOServer(server, {
-    cors: { origin: '*' },
+    cors: allowedOrigins.length
+      ? { origin: allowedOrigins }
+      : { origin: false },
   });
+
+  // Basic per-IP throttle on join-room, so one client cannot be used to
+  // enumerate or flood arbitrary rooms.
+  const joinAttempts = new Map<string, { count: number; resetAt: number }>();
+  const JOIN_LIMIT = 20;
+  const JOIN_WINDOW_MS = 60_000;
+
+  const allowJoin = (ip: string) => {
+    const now = Date.now();
+    const entry = joinAttempts.get(ip);
+    if (!entry || now > entry.resetAt) {
+      joinAttempts.set(ip, { count: 1, resetAt: now + JOIN_WINDOW_MS });
+      return true;
+    }
+    entry.count += 1;
+    return entry.count <= JOIN_LIMIT;
+  };
 
   io.on('connection', (socket) => {
     socket.on('join-room', (roomId) => {
+      // Room ids are opaque client-generated strings; constrain the shape so
+      // they cannot be used to probe the adapter with arbitrary keys.
+      if (typeof roomId !== 'string' || !/^[a-z0-9-]{1,32}$/i.test(roomId)) {
+        socket.disconnect(true);
+        return;
+      }
+      if (!allowJoin(socket.handshake.address ?? 'unknown')) {
+        socket.disconnect(true);
+        return;
+      }
       socket.join(roomId);
       socket.to(roomId).emit('user-joined', socket.id);
       const room = io.sockets.adapter.rooms.get(roomId);
@@ -40,56 +77,17 @@ async function startServer() {
     });
   });
 
-  // API route to proxy requests to Apple CMS API
+  // API route to proxy requests to Apple CMS API.
+  // Validation + fetching live in src/shared/fetchJson.ts so the Netlify
+  // function and this server cannot drift apart.
   app.get('/api/proxy', async (req, res) => {
-    const targetUrl = req.query.url as string;
+    const targetUrl = req.query.url as string | undefined;
     if (!targetUrl) {
       return res.status(400).json({ error: 'Missing url parameter' });
     }
 
-    const validation = validateProxyUrl(targetUrl);
-    if (!validation.valid) {
-      return res.status(403).json({ error: validation.error });
-    }
-
-    try {
-      const response = await fetch(targetUrl, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          Accept: 'application/json, text/plain, */*',
-        },
-        signal: AbortSignal.timeout(10000),
-      });
-
-      if (!response.ok) {
-        return res
-          .status(response.status)
-          .json({ error: `Proxy failed with status ${response.status}` });
-      }
-
-      const responseBody = await response.text();
-
-      // Some Apple CMS/vod APIs serve valid JSON with a text/html
-      // content-type, so validate by parsing the body instead of only
-      // trusting the header.
-      let data: unknown;
-      try {
-        data = JSON.parse(responseBody);
-      } catch {
-        console.warn(`[Proxy] Non-JSON response from ${targetUrl}`);
-        return res
-          .status(403)
-          .json({ error: 'Only JSON responses are allowed' });
-      }
-
-      res.json(data);
-    } catch (error) {
-      console.warn(
-        `[Proxy] Failed to fetch from ${targetUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-      res.status(500).json({ error: 'Failed to fetch from target URL' });
-    }
+    const { status, data } = await fetchUpstreamJson(targetUrl);
+    res.status(status).json(data);
   });
 
   // Pusher private channel authentication
@@ -127,7 +125,13 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    // SPA fallback. Express 5 uses path-to-regexp v8, where a bare '*' pattern
+    // throws ("Missing parameter name"), so this is registered as a terminal
+    // middleware instead of a wildcard route.
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return next();
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

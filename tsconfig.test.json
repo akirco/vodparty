@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    /*
+     * Tests run under Node but import browser-targeted modules, so the DOM
+     * types have to be in scope even though there is no DOM at runtime.
+     */
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    /* Tests import .tsx components directly. */
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  /*
+   * Tests import application source directly (that is the point -- no copy of
+   * the code under test), so this project covers both `test/` and the shared
+   * modules it pulls in.
+   */
+  "include": [
+    "test/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/utils/stripHtml.ts",
+    "src/services/history.ts",
+    "src/services/storage.ts",
+    "src/utils/index.ts"
+  ]
+}

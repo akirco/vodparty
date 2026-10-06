@@ -4,45 +4,27 @@ export const isTauri = () => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 };
 
+/**
+ * Whether the app is running in the Windows shell.
+ *
+ * Only Windows draws custom window controls: macOS and Linux get their native
+ * titlebar buttons (see tauri.macos.conf.json / tauri.linux.conf.json), so the
+ * in-app ones would be redundant there.
+ *
+ * Detected from the user agent rather than @tauri-apps/plugin-os: the webview
+ * UA reliably distinguishes the three shells (WebView2 -> "Windows NT",
+ * WKWebView -> "Macintosh", WebKitGTK -> "X11; Linux"), and it avoids pulling
+ * in a whole plugin for one boolean.
+ */
+export const isWindows = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  return /Windows/i.test(navigator.userAgent);
+};
+
 export function useLatest<T>(value: T): { readonly current: T } {
   const ref = useRef(value);
   ref.current = value;
   return ref;
-}
-
-const DANGEROUS_TAGS = [
-  'script',
-  'style',
-  'iframe',
-  'object',
-  'embed',
-  'link',
-  'meta',
-];
-
-export function sanitizeHtml(html: string): string {
-  const doc = document.createElement('div');
-  doc.innerHTML = html;
-
-  for (const tag of DANGEROUS_TAGS) {
-    doc.querySelectorAll(tag).forEach((el) => el.remove());
-  }
-
-  doc.querySelectorAll('*').forEach((el) => {
-    for (let i = el.attributes.length - 1; i >= 0; i--) {
-      const attr = el.attributes[i];
-      if (attr.name.toLowerCase().startsWith('on')) {
-        el.removeAttribute(attr.name);
-      } else if (
-        attr.name.toLowerCase() === 'href' &&
-        attr.value.toLowerCase().startsWith('javascript:')
-      ) {
-        el.removeAttribute(attr.name);
-      }
-    }
-  });
-
-  return doc.innerHTML;
 }
 
 export function useSpotlight<T extends HTMLElement>() {

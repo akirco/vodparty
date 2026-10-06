@@ -2,15 +2,19 @@ import {
   ArrowUp,
   ChevronLeft,
   Clock,
+  Loader2,
   Menu,
   Search,
   Settings,
   X,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useState } from 'react';
+import type React from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ensureSourcesLoaded } from '../stores/useSourceStore';
+import { PlayerHost } from './PlayerHost';
 import { SearchModal } from './SearchModal';
+import { WindowControls } from './WindowControls';
 
 export const Layout: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,7 +43,8 @@ export const Layout: React.FC = () => {
       }
     };
 
-    window.addEventListener('scroll', handleScroll);
+    // Passive: the handler only reads scrollY, so it must not block scrolling.
+    window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('scroll', handleScroll);
@@ -78,6 +83,7 @@ export const Layout: React.FC = () => {
               >
                 {location.pathname !== '/' && (
                   <button
+                    type="button"
                     onClick={() => navigate(-1)}
                     className="p-2 -ml-2 text-zinc-400 hover:text-white transition-colors rounded-full hover:bg-zinc-800"
                     title="Go Back"
@@ -85,14 +91,15 @@ export const Layout: React.FC = () => {
                     <ChevronLeft className="w-5 h-5" />
                   </button>
                 )}
-                <a href="/">
-                  <img src="/favicon-32x32.png" />
-                </a>
+                <Link to="/" aria-label="Synchive home">
+                  <img src="/favicon-32x32.png" alt="Synchive" />
+                </Link>
               </div>
 
               {/* Desktop Search Trigger */}
-              <div
-                className="hidden md:flex flex-1 max-w-md mx-8 cursor-pointer"
+              <button
+                type="button"
+                className="hidden md:flex flex-1 max-w-md mx-8 cursor-pointer text-left"
                 data-tauri-drag-region="false"
                 onClick={openSearchModal}
               >
@@ -103,10 +110,12 @@ export const Layout: React.FC = () => {
                     <span className="text-[9px]">⌘</span>K
                   </kbd>
                 </div>
-              </div>
+              </button>
 
+              {/* `self-stretch` so the Windows caption buttons can use h-full and line
+                up with the title bar height. */}
               <div
-                className="flex items-center gap-4"
+                className="flex items-center gap-4 self-stretch"
                 data-tauri-drag-region="false"
               >
                 <Link
@@ -124,6 +133,7 @@ export const Layout: React.FC = () => {
                   <Settings className="w-5 h-5" />
                 </Link>
                 <button
+                  type="button"
                   className="md:hidden p-2 text-zinc-400 hover:text-white"
                   onClick={() => setIsMenuOpen(!isMenuOpen)}
                 >
@@ -133,6 +143,7 @@ export const Layout: React.FC = () => {
                     <Menu className="w-6 h-6" />
                   )}
                 </button>
+                <WindowControls />
               </div>
             </div>
           </div>
@@ -159,26 +170,42 @@ export const Layout: React.FC = () => {
           )}
         </header>
 
-        {/* Main Content */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-2 sm:px-4 lg:px-6 py-8 select-none">
-          <Outlet />
-        </main>
+        {/* Mounted above <Outlet/> so the video element survives navigation:
+            leaving the player page keeps playback running in the mini bar. */}
+        <PlayerHost>
+          {/* Main Content. Text selection is re-enabled on prose blocks
+              (synopsis, cast lists) so copy/paste works there. */}
+          <main className="flex-1 max-w-7xl w-full mx-auto px-2 sm:px-4 lg:px-6 py-8">
+            {/* Lazily-loaded routes are fetched on navigation; show a spinner
+              while the chunk arrives. */}
+            <Suspense
+              fallback={
+                <div className="flex justify-center items-center min-h-[60vh]">
+                  <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </main>
 
-        {/* Search Modal */}
-        <SearchModal isOpen={searchModalOpen} onClose={closeSearchModal} />
+          {/* Search Modal */}
+          <SearchModal isOpen={searchModalOpen} onClose={closeSearchModal} />
 
-        {/* Back to Top Button */}
-        <button
-          onClick={scrollToTop}
-          className={`fixed bottom-8 right-8 z-50 p-3 rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-600 transition-all duration-300 ${
-            showBackToTop
-              ? 'opacity-100 translate-y-0'
-              : 'opacity-0 translate-y-10 pointer-events-none'
-          }`}
-          aria-label="Back to top"
-        >
-          <ArrowUp className="w-5 h-5" />
-        </button>
+          {/* Back to Top Button */}
+          <button
+            type="button"
+            onClick={scrollToTop}
+            className={`fixed bottom-8 right-8 z-50 p-3 rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-600 transition-all duration-300 ${
+              showBackToTop
+                ? 'opacity-100 translate-y-0'
+                : 'opacity-0 translate-y-10 pointer-events-none'
+            }`}
+            aria-label="Back to top"
+          >
+            <ArrowUp className="w-5 h-5" />
+          </button>
+        </PlayerHost>
       </div>
     </div>
   );

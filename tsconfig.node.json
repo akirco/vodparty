@@ -1,10 +1,16 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
-    "skipLibCheck": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true
+    /*
+     * A composite project must emit something (TS6310). Vite reads the config
+     * directly, so only type declarations are written, into a scratch dir that
+     * is gitignored.
+     */
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "outDir": "./node_modules/.tmp/tsconfig.node",
+    "types": ["node"]
   },
   "include": ["vite.config.ts"]
 }

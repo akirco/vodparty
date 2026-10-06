@@ -11,7 +11,8 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import type React from 'react';
+import { useEffect, useState } from 'react';
 import {
   getProxySettings,
   getPusherSettings,
@@ -24,7 +25,7 @@ import {
   saveHiddenCategories,
 } from '../services/preferences';
 import { ensureSourcesLoaded, useSourceStore } from '../stores/useSourceStore';
-import { ApiSource, Category } from '../types';
+import type { ApiSource, Category } from '../types';
 import { appendUrlParam, isTauri } from '../utils';
 
 const testSource = async (url: string): Promise<'valid' | 'invalid'> => {
@@ -63,15 +64,79 @@ export const Settings: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<number[]>([]);
 
+  // Pusher / proxy fields are edited locally and persisted on an explicit
+  // Save. Previously each keystroke called into the Tauri store (a disk write)
+  // and rebuilt the Pusher client.
   const [pusherAppId, setPusherAppId] = useState('');
   const [pusherKey, setPusherKey] = useState('');
   const [pusherSecret, setPusherSecret] = useState('');
   const [pusherCluster, setPusherCluster] = useState('ap1');
+  const [pusherSaved, setPusherSaved] = useState(false);
+  const [pusherError, setPusherError] = useState<string | null>(null);
 
   const [httpProxy, setHttpProxy] = useState('');
   const [httpsProxy, setHttpsProxy] = useState('');
+  const [proxySaved, setProxySaved] = useState(false);
 
   const [selectedType, setSelectedType] = useState<string>('');
+
+  // Snapshot of what is actually persisted, used to detect edits and to roll
+  // the form back to the saved state after a successful write.
+  const [loadedPusher, setLoadedPusher] = useState({
+    app_id: '',
+    key: '',
+    secret: '',
+    cluster: 'ap1',
+  });
+  const [loadedProxy, setLoadedProxy] = useState({
+    http_proxy: '',
+    https_proxy: '',
+  });
+
+  const pusherDirty =
+    pusherAppId !== loadedPusher.app_id ||
+    pusherKey !== loadedPusher.key ||
+    pusherSecret !== loadedPusher.secret ||
+    pusherCluster !== loadedPusher.cluster;
+
+  const proxyDirty =
+    httpProxy !== loadedProxy.http_proxy ||
+    httpsProxy !== loadedProxy.https_proxy;
+
+  const handleSavePusher = async () => {
+    try {
+      await savePusherSettings(
+        pusherAppId,
+        pusherKey,
+        pusherSecret,
+        pusherCluster,
+      );
+      setLoadedPusher({
+        app_id: pusherAppId,
+        key: pusherKey,
+        secret: pusherSecret,
+        cluster: pusherCluster,
+      });
+      setPusherError(null);
+      setPusherSaved(true);
+      setTimeout(() => setPusherSaved(false), 2000);
+    } catch (err) {
+      setPusherError(
+        err instanceof Error ? err.message : 'Failed to save Pusher settings',
+      );
+    }
+  };
+
+  const handleSaveProxy = async () => {
+    try {
+      await saveProxySettings(httpProxy, httpsProxy);
+      setLoadedProxy({ http_proxy: httpProxy, https_proxy: httpsProxy });
+      setProxySaved(true);
+      setTimeout(() => setProxySaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to save proxy settings:', err);
+    }
+  };
 
   const allTypes = [...new Set(sources.map((s) => s.type).filter(Boolean))];
   const filteredSources = selectedType
@@ -126,12 +191,14 @@ export const Settings: React.FC = () => {
         setPusherKey(settings.key);
         setPusherSecret(settings.secret);
         setPusherCluster(settings.cluster);
+        setLoadedPusher(settings);
       });
 
       getProxySettings().then((settings) => {
         if (cancelled) return;
         setHttpProxy(settings.http_proxy);
         setHttpsProxy(settings.https_proxy);
+        setLoadedProxy(settings);
       });
     };
 
@@ -226,6 +293,7 @@ export const Settings: React.FC = () => {
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-semibold text-white">API Sources</h3>
           <button
+            type="button"
             onClick={() => setShowBatchImport(true)}
             className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
           >
@@ -261,6 +329,7 @@ export const Settings: React.FC = () => {
 
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
           <button
+            type="button"
             onClick={() => setSelectedType('')}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
               selectedType === ''
@@ -272,6 +341,7 @@ export const Settings: React.FC = () => {
           </button>
           {allTypes.map((type) => (
             <button
+              type="button"
               key={type}
               onClick={() => setSelectedType(type)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
@@ -329,6 +399,7 @@ export const Settings: React.FC = () => {
               <div className="flex items-center gap-2 shrink-0">
                 {primaryId !== source.id && (
                   <button
+                    type="button"
                     onClick={() => {
                       setPrimaryId(source.id);
                       useSourceStore.getState().saveSources(sources, source.id);
@@ -341,6 +412,7 @@ export const Settings: React.FC = () => {
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={() => handleRemoveSource(source.id)}
                   className="p-2 text-zinc-400 hover:text-red-400 transition-colors"
                   title="Remove Source"
@@ -367,6 +439,7 @@ export const Settings: React.FC = () => {
               const isHidden = hiddenCategories.includes(cat.type_id);
               return (
                 <button
+                  type="button"
                   key={cat.type_id}
                   onClick={() => toggleCategoryVisibility(cat.type_id)}
                   className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
@@ -400,67 +473,97 @@ export const Settings: React.FC = () => {
 
         <div className="grid gap-4">
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">App ID</label>
+            <label
+              htmlFor="pusher-app-id"
+              className="text-zinc-500 text-sm block mb-2"
+            >
+              App ID
+            </label>
             <input
+              id="pusher-app-id"
               type="text"
               placeholder="Enter Pusher App ID"
               value={pusherAppId}
-              onChange={(e) => {
-                const val = e.target.value;
-                setPusherAppId(val);
-                savePusherSettings(val, pusherKey, pusherSecret, pusherCluster);
-              }}
+              onChange={(e) => setPusherAppId(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
           </div>
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">Key</label>
+            <label
+              htmlFor="pusher-key"
+              className="text-zinc-500 text-sm block mb-2"
+            >
+              Key
+            </label>
             <input
+              id="pusher-key"
               type="text"
               placeholder="Enter Pusher key"
               value={pusherKey}
-              onChange={(e) => {
-                const val = e.target.value;
-                setPusherKey(val);
-                savePusherSettings(
-                  pusherAppId,
-                  val,
-                  pusherSecret,
-                  pusherCluster,
-                );
-              }}
+              onChange={(e) => setPusherKey(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
           </div>
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">Secret</label>
+            <label
+              htmlFor="pusher-secret"
+              className="text-zinc-500 text-sm block mb-2"
+            >
+              Secret
+            </label>
             <input
+              id="pusher-secret"
               type="password"
               placeholder="Enter Pusher secret"
               value={pusherSecret}
-              onChange={(e) => {
-                const val = e.target.value;
-                setPusherSecret(val);
-                savePusherSettings(pusherAppId, pusherKey, val, pusherCluster);
-              }}
+              onChange={(e) => setPusherSecret(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
           </div>
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">Cluster</label>
+            <label
+              htmlFor="pusher-cluster"
+              className="text-zinc-500 text-sm block mb-2"
+            >
+              Cluster
+            </label>
             <input
+              id="pusher-cluster"
               type="text"
               placeholder="e.g. ap1"
               value={pusherCluster}
-              onChange={(e) => {
-                const val = e.target.value;
-                setPusherCluster(val);
-                savePusherSettings(pusherAppId, pusherKey, pusherSecret, val);
-              }}
+              onChange={(e) => setPusherCluster(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
           </div>
         </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleSavePusher}
+            disabled={!pusherDirty || pusherSaved}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {pusherSaved ? (
+              <>
+                <CheckCircle className="w-4 h-4" /> Saved
+              </>
+            ) : (
+              'Save Pusher settings'
+            )}
+          </button>
+          {pusherError && (
+            <span className="text-sm text-red-400">{pusherError}</span>
+          )}
+        </div>
+        {!isTauri() && (
+          <p className="text-xs text-zinc-500">
+            In the browser build these values come from build-time environment
+            variables and cannot be changed at runtime. Save applies to the
+            desktop app only.
+          </p>
+        )}
       </div>
 
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 space-y-6">
@@ -472,38 +575,52 @@ export const Settings: React.FC = () => {
 
         <div className="grid gap-4">
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">
+            <label
+              htmlFor="http-proxy"
+              className="text-zinc-500 text-sm block mb-2"
+            >
               HTTP Proxy
             </label>
             <input
+              id="http-proxy"
               type="text"
               placeholder="http://127.0.0.1:7890"
               value={httpProxy}
-              onChange={(e) => {
-                const val = e.target.value;
-                setHttpProxy(val);
-                saveProxySettings(val, httpsProxy);
-              }}
+              onChange={(e) => setHttpProxy(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
           </div>
           <div>
-            <label className="text-zinc-500 text-sm block mb-2">
+            <label
+              htmlFor="https-proxy"
+              className="text-zinc-500 text-sm block mb-2"
+            >
               HTTPS Proxy
             </label>
             <input
               type="text"
               placeholder="http://127.0.0.1:7890"
               value={httpsProxy}
-              onChange={(e) => {
-                const val = e.target.value;
-                setHttpsProxy(val);
-                saveProxySettings(httpProxy, val);
-              }}
+              onChange={(e) => setHttpsProxy(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800/50 rounded-lg px-4 py-2 text-white focus:border-indigo-500 focus:outline-none text-sm"
             />
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={handleSaveProxy}
+          disabled={!proxyDirty || proxySaved}
+          className="flex items-center gap-2 self-start bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          {proxySaved ? (
+            <>
+              <CheckCircle className="w-4 h-4" /> Saved
+            </>
+          ) : (
+            'Save proxy settings'
+          )}
+        </button>
       </div>
 
       {showBatchImport && (
@@ -514,6 +631,7 @@ export const Settings: React.FC = () => {
                 Batch Import URLs
               </h3>
               <button
+                type="button"
                 onClick={() => setShowBatchImport(false)}
                 className="p-2 text-zinc-400 hover:text-white transition-colors"
               >
@@ -538,12 +656,14 @@ export const Settings: React.FC = () => {
             />
             <div className="flex justify-end gap-3">
               <button
+                type="button"
                 onClick={() => setShowBatchImport(false)}
                 className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleBatchImport}
                 disabled={!batchInput.trim()}
                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors"

@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+
+    /*
+     * Shared modules under `src/shared` are imported by BOTH the browser bundle
+     * (via vite) and by `server.ts` / the Netlify functions running under Node
+     * with native type stripping. Node requires explicit extensions in relative
+     * specifiers, so those modules write `./foo.ts`; enabling this option keeps
+     * that legal for every project, and vite resolves it fine.
+     */
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+
+    /* Nothing here is emitted: vite bundles the browser app, Node runs the
+     * server directly from source. */
+    "noEmit": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}

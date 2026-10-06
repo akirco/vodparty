@@ -1,5 +1,6 @@
 [build]
-  command = "npm run build"
+  # Matches the package manager used by the repo (see packageManager).
+  command = "pnpm build"
   publish = "dist"
 
 [functions]

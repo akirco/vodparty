@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { ensureSourcesLoaded, useSourceStore } from '../stores/useSourceStore';
-import { AppleCmsResponse, Category, Video } from '../types';
+import type { AppleCmsResponse, Category, Video } from '../types';
 import { appendUrlParam, isTauri } from '../utils';
 import { storage } from './storage';
 
@@ -50,12 +50,16 @@ async function doFetch(targetUrl: string) {
   }
 }
 
-export function clearCache() {
+/**
+ * Drop the in-memory response cache. Also invalidates the persisted
+ * category / empty-category caches, which used to survive indefinitely
+ * (24h TTL with no way to force a refresh) even after the user edited or
+ * replaced a source URL.
+ */
+export async function clearCache(): Promise<void> {
   cache.clear();
-  for (const key of inflight.keys()) {
-    cache.delete(key);
-  }
   inflight.clear();
+  await clearPersistedCategoryCaches();
 }
 
 const getCategoriesCacheKey = (sourceId: string) =>
@@ -65,6 +69,19 @@ const EMPTY_CATEGORIES_TTL = 24 * 60 * 60 * 1000;
 
 const getEmptyCategoriesCacheKey = (sourceId: string) =>
   `apple_cms_categories_empty_${sourceId}`;
+
+/**
+ * The keys written by `setCachedCategories` / `setCachedEmptyCategories`.
+ * Tracked so they can be removed again -- `storage` has no prefix listing,
+ * so we cannot enumerate them at clear time.
+ */
+const categoryCacheKeys = new Set<string>();
+
+export async function clearPersistedCategoryCaches(): Promise<void> {
+  const keys = [...categoryCacheKeys];
+  categoryCacheKeys.clear();
+  await Promise.all(keys.map((key) => storage.remove(key)));
+}
 
 const getCachedEmptyCategories = async (
   sourceId: string,
@@ -82,7 +99,9 @@ const setCachedEmptyCategories = async (
   sourceId: string,
   emptyIds: number[],
 ) => {
-  await storage.set(getEmptyCategoriesCacheKey(sourceId), {
+  const key = getEmptyCategoriesCacheKey(sourceId);
+  categoryCacheKeys.add(key);
+  await storage.set(key, {
     data: emptyIds,
     timestamp: Date.now(),
   });
@@ -101,7 +120,9 @@ const getCachedCategories = async (
 };
 
 const setCachedCategories = async (sourceId: string, data: Category[]) => {
-  await storage.set(getCategoriesCacheKey(sourceId), {
+  const key = getCategoriesCacheKey(sourceId);
+  categoryCacheKeys.add(key);
+  await storage.set(key, {
     data,
     timestamp: Date.now(),
   });
@@ -200,9 +221,9 @@ export const fetchEmptyCategoryIds = async (
   const cached = await getCachedEmptyCategories(sourceId);
   if (cached) {
     const emptySet = new Set(cached);
-    categories.forEach((cat) =>
-      onResult?.(cat.type_id, !emptySet.has(cat.type_id)),
-    );
+    for (const cat of categories) {
+      onResult?.(cat.type_id, !emptySet.has(cat.type_id));
+    }
     return cached;
   }
 
@@ -210,21 +231,27 @@ export const fetchEmptyCategoryIds = async (
   const concurrency = Math.min(4, Math.max(1, categories.length));
   let index = 0;
 
-  const worker = async () => {
-    while (index < categories.length) {
-      const cat = categories[index++];
-      try {
-        const has = await fetchCategoryHasVideos(cat.type_id, sourceId);
-        if (!has) emptyIds.push(cat.type_id);
-        onResult?.(cat.type_id, has);
-      } catch {
-        // Unknown result — keep the tab visible rather than hiding it.
-        onResult?.(cat.type_id, true);
-      }
-    }
-  };
+  // One probe per category, walking the shared `index` cursor.
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < concurrency; w++) {
+    workers.push(
+      (async () => {
+        while (index < categories.length) {
+          const cat = categories[index++];
+          try {
+            const has = await fetchCategoryHasVideos(cat.type_id, sourceId);
+            if (!has) emptyIds.push(cat.type_id);
+            onResult?.(cat.type_id, has);
+          } catch {
+            // Unknown result — keep the tab visible rather than hiding it.
+            onResult?.(cat.type_id, true);
+          }
+        }
+      })(),
+    );
+  }
 
-  await Promise.all(Array.from({ length: concurrency }, worker));
+  await Promise.all(workers);
   await setCachedEmptyCategories(sourceId, emptyIds);
   return emptyIds;
 };
