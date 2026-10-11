@@ -120,6 +120,9 @@ struct PusherState {
     pusher: Option<Pusher>,
     proxy_url: Option<String>,
     client: Option<reqwest::Client>,
+    /// The `proxy_url` the cached `client` was built for. A client built for a
+    /// stale/absent proxy is not reusable.
+    client_proxy: Option<String>,
 }
 
 static PUSHER_STATE: std::sync::OnceLock<Mutex<PusherState>> = std::sync::OnceLock::new();
@@ -130,6 +133,7 @@ fn get_pusher_state() -> &'static Mutex<PusherState> {
             pusher: None,
             proxy_url: None,
             client: None,
+            client_proxy: None,
         })
     })
 }
@@ -138,9 +142,55 @@ fn build_client(proxy_url: &Option<String>) -> Result<reqwest::Client, String> {
     let mut builder =
         reqwest::Client::builder().timeout(std::time::Duration::from_secs(PROXY_TIMEOUT_SECS));
     if let Some(ref proxy) = *proxy_url {
-        builder = builder.proxy(reqwest::Proxy::http(proxy).map_err(|e| e.to_string())?);
+        // An empty/whitespace value would make reqwest fail at build time with a
+        // confusing parse error, and a bare host with no scheme is a common
+        // user typo. Treat those as "no proxy" instead.
+        if !proxy.trim().is_empty() {
+            let normalized = if proxy.contains("://") {
+                proxy.trim().to_string()
+            } else {
+                format!("http://{}", proxy.trim())
+            };
+            builder = builder.proxy(reqwest::Proxy::http(&normalized).map_err(|e| e.to_string())?);
+        }
     }
     builder.build().map_err(|e| e.to_string())
+}
+
+/// Resolve the shared HTTP client, building it on first use.
+///
+/// Two bugs lived here:
+///
+/// 1. The client was cached forever, so a client built with a missing or stale
+///    `proxy_url` was permanent -- the JS `clearCache()` cannot reach into Rust,
+///    so the app had no recovery short of a restart.
+/// 2. The build happened outside the lock, so the first-load category probe
+///    (4 concurrent requests) all took the `None` branch and each overwrote the
+///    previous one's client.
+///
+/// Building is synchronous and cheap (no I/O), so it is done under the lock and
+/// the cache is keyed on the proxy it was built for.
+fn get_or_build_client() -> Result<reqwest::Client, String> {
+    let mut state = get_pusher_state().lock().map_err(|e| e.to_string())?;
+
+    let proxy_url = state.proxy_url.clone();
+    let cache_valid = match (&state.client, &state.client_proxy) {
+        (Some(_), Some(cached)) => proxy_url.as_deref() == Some(cached.as_str()),
+        (None, _) => false,
+        // Client present but we do not know what it was built for: rebuild.
+        (Some(_), None) => false,
+    };
+
+    if cache_valid {
+        if let Some(ref c) = state.client {
+            return Ok(c.clone());
+        }
+    }
+
+    let client = build_client(&proxy_url)?;
+    state.client = Some(client.clone());
+    state.client_proxy = proxy_url;
+    Ok(client)
 }
 
 fn get_store_string<R: tauri::Runtime>(store: &tauri_plugin_store::Store<R>, key: &str) -> String {
@@ -255,7 +305,10 @@ async fn save_proxy_settings(
     } else {
         state.proxy_url = None;
     }
+    // Rebuild eagerly so the next request does not pay for it, and record the
+    // proxy the cache is valid for.
     state.client = build_client(&state.proxy_url).ok();
+    state.client_proxy = state.proxy_url.clone();
 
     Ok(())
 }
@@ -303,21 +356,24 @@ async fn pusher_auth(socket_id: String, channel_name: String) -> Result<String, 
 
 #[tauri::command]
 async fn proxy_request(url: String) -> Result<String, String> {
-    let parsed = validate_proxy_url(&url)?;
+    // Bound the *whole* command, not just the HTTP call.
+    //
+    // `PROXY_TIMEOUT_SECS` lives on the reqwest client, so it only covers a
+    // request once a client exists. Anything before that (lock contention while
+    // another thread rebuilds, store reads, an unreachable user proxy) was
+    // unbounded -- and an unbounded `invoke` leaves the JS spinner up forever,
+    // because the webview is waiting on a reply that never arrives.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(PROXY_TIMEOUT_SECS + 5),
+        proxy_request_inner(url),
+    )
+    .await
+    .map_err(|_| "Proxy request timed out".to_string())?
+}
 
-    let client = {
-        let state = get_pusher_state().lock().map_err(|e| e.to_string())?;
-        match state.client {
-            Some(ref c) => c.clone(),
-            None => {
-                let client = build_client(&state.proxy_url)?;
-                drop(state);
-                let mut state = get_pusher_state().lock().map_err(|e| e.to_string())?;
-                state.client = Some(client.clone());
-                client
-            }
-        }
-    };
+async fn proxy_request_inner(url: String) -> Result<String, String> {
+    let parsed = validate_proxy_url(&url)?;
+    let client = get_or_build_client()?;
 
     let res = client
         .get(parsed)
@@ -355,6 +411,11 @@ async fn proxy_request(url: String) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -406,6 +467,7 @@ pub fn run() {
                 let mut state = get_pusher_state().lock().unwrap();
                 state.proxy_url = proxy_url;
                 state.client = build_client(&state.proxy_url).ok();
+                state.client_proxy = state.proxy_url.clone();
             }
             Ok(())
         })

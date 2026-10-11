@@ -37,9 +37,27 @@ async function dedupedFetch<T>(url: string, ttl = CACHE_TTL): Promise<T> {
   return promise;
 }
 
+/**
+ * Client-side ceiling for a single upstream request.
+ *
+ * Rust bounds `proxy_request` too, but this is the backstop that guarantees the
+ * UI can never hang on IPC: an `invoke` that never settles leaves the loading
+ * spinner up forever, with no error to surface. Kept above the Rust timeout so
+ * Rust's own (more specific) message wins when it can.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 async function doFetch(targetUrl: string) {
   if (isTauri()) {
-    const result = await invoke<string>('proxy_request', { url: targetUrl });
+    const result = await Promise.race([
+      invoke<string>('proxy_request', { url: targetUrl }),
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(
+          () => reject(new Error('Request timed out')),
+          REQUEST_TIMEOUT_MS,
+        ),
+      ),
+    ]);
     return JSON.parse(result);
   } else {
     const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;

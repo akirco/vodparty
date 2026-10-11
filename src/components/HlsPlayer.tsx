@@ -174,6 +174,19 @@ export const HlsPlayer: React.FC<HlsPlayerProps> = ({
     // Bounds the native <-> hls.js fallback chain so it always terminates.
     const canRetry = fallback.current.count < MAX_FALLBACKS;
 
+    // PlayerHost mounts this component immediately with an empty src (no
+    // source picked yet on first load). Both `video.src = ''` and
+    // `hls.loadSource('')` resolve to the document URL, so the player would
+    // fetch the SPA's own HTML and report "no EXTM3U delimiter" against
+    // http://localhost:3000/. Do nothing until there is a real source.
+    if (!src) {
+      if (video.hasAttribute('src')) {
+        video.removeAttribute('src');
+        video.load();
+      }
+      return;
+    }
+
     const canPlayNative = Boolean(
       video.canPlayType('application/vnd.apple.mpegurl'),
     );

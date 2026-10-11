@@ -14,6 +14,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const CANDIDATE_SUFFIXES = ['.ts', '.tsx', '.mts', '.js', '.mjs', '.jsx'];
 
+/**
+ * Tauri APIs are redirected to stubs.
+ *
+ * The real packages talk to `window.__TAURI_INTERNALS__` and expose read-only
+ * module bindings, so a test cannot simply reassign `invoke`. Redirecting the
+ * specifier is the only way to drive the app's real IPC call sites.
+ */
+const STUBS = {
+  '@tauri-apps/api/core': './stubs/tauri-core.mjs',
+  '@tauri-apps/plugin-store': './stubs/tauri-store.mjs',
+  'pusher-js': './stubs/pusher.mjs',
+};
+
 const isFile = (p) => {
   try {
     return statSync(p).isFile();
@@ -31,6 +44,15 @@ const isDir = (p) => {
 };
 
 export async function resolve(specifier, context, nextResolve) {
+  // Tauri APIs -> local stubs (see STUBS above).
+  if (specifier in STUBS) {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    return {
+      url: pathToFileURL(path.join(here, STUBS[specifier])).href,
+      shortCircuit: true,
+    };
+  }
+
   // Bare specifiers (node builtins, packages) go straight through.
   if (!specifier.startsWith('.') && !specifier.startsWith('/')) {
     return nextResolve(specifier, context);
